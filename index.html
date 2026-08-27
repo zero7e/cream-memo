@@ -3,11 +3,11 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>奶龙懒人备忘录 · 躺平也能记事</title>
+<title>小云懒人备忘录 · 躺平也能记事</title>
 
 <!--
 ================================================================================
-  奶龙懒人备忘录 v3.0（单文件版）
+  小云懒人备忘录 v3.0（单文件版）
   技术栈：原生 HTML + CSS + JavaScript（零框架、零外部依赖）
   后端：Bmob 后端云 REST API（数据库 + 文件存储）
   定位：面向普通学生、上班族的日常待办/琐事记录工具
@@ -133,22 +133,22 @@ body {
 .theme-dot[data-t="mint"]  { background: #D9F5E9; border-color: #34c08a; }
 .theme-dot.active { border-width: 3px; }
 
-/* ---- 4. 标题区 + 奶龙图标 ---- */
+/* ---- 4. 标题区 + 小云图标 ---- */
 .header { text-align: center; margin-bottom: 20px; position: relative; }
 .header h1 {
   font-size: 24px; color: var(--text);
   display: inline-flex; align-items: center; gap: 6px;
 }
 .header .subtitle { font-size: 13px; color: var(--text-l); margin-top: 4px; }
-.dragon-icon {
+.cloud-icon {
   font-size: 28px; cursor: pointer; display: inline-block;
   transition: transform 0.3s; user-select: none;
 }
-.dragon-icon:hover { transform: rotate(-8deg) scale(1.1); }
-.dragon-icon:active { transform: scale(0.9); }
+.cloud-icon:hover { transform: rotate(-8deg) scale(1.1); }
+.cloud-icon:active { transform: scale(0.9); }
 
-/* 奶龙气泡 */
-.dragon-bubble {
+/* 小云气泡 */
+.cloud-bubble {
   position: fixed; top: 15%; left: 50%; transform: translateX(-50%) scale(0);
   background: var(--card); border-radius: 18px; padding: 14px 20px;
   font-size: 14px; color: var(--text); line-height: 1.6;
@@ -156,7 +156,7 @@ body {
   max-width: 320px; text-align: center; pointer-events: none;
   transition: transform 0.35s ease, opacity 0.3s ease; opacity: 0;
 }
-.dragon-bubble.show { transform: translateX(-50%) scale(1); opacity: 1; }
+.cloud-bubble.show { transform: translateX(-50%) scale(1); opacity: 1; }
 
 /* ---- 5. 输入表单 ---- */
 .form-card {
@@ -293,7 +293,7 @@ body {
   70%  { transform: scale(1.08); opacity: 1; }
   100% { transform: scale(1); }
 }
-.celebrate-box .dragon { font-size: 56px; display: block; margin-bottom: 10px; }
+.celebrate-box .cloud { font-size: 56px; display: block; margin-bottom: 10px; }
 .celebrate-box h2 { font-size: 20px; color: var(--text); margin-bottom: 6px; }
 .celebrate-box p { font-size: 14px; color: var(--text-l); line-height: 1.6; margin-bottom: 16px; }
 
@@ -364,11 +364,11 @@ body {
     </div>
   </div>
 
-  <!-- 标题区 + 奶龙图标 -->
+  <!-- 标题区 + 小云图标 -->
   <div class="header">
     <h1>
-      <span class="dragon-icon" onclick="dragonTalk()">🐉</span>
-      奶龙懒人备忘录
+      <span class="cloud-icon" onclick="cloudTalk()">☁️</span>
+      小云懒人备忘录
     </h1>
     <div class="subtitle">躺平也要记事，琐事不遗漏 ✿</div>
   </div>
@@ -405,8 +405,8 @@ body {
 
 </div>
 
-<!-- 奶龙气泡 -->
-<div class="dragon-bubble" id="dragonBubble"></div>
+<!-- 小云气泡 -->
+<div class="cloud-bubble" id="cloudBubble"></div>
 
 <!-- 加载遮罩 -->
 <div class="loading-mask" id="loadingMask"><div class="spinner"></div></div>
@@ -416,9 +416,9 @@ body {
 <!-- 庆祝弹窗 -->
 <div class="celebrate" id="celebrate">
   <div class="celebrate-box">
-    <span class="dragon">🐉</span>
+    <span class="cloud">☁️</span>
     <h2>全部搞定啦！</h2>
-    <p id="celebrateMsg">太厉害了，所有备忘都完成了～<br/>奶龙说你是效率小能手！</p>
+    <p id="celebrateMsg">太厉害了，所有备忘都完成了～<br/>小云说你是效率小能手！</p>
     <button class="btn btn-primary" onclick="closeCelebrate()">好耶！</button>
   </div>
 </div>
@@ -426,7 +426,7 @@ body {
 <!-- 登录弹窗 -->
 <div class="login-overlay" id="loginOverlay">
   <div class="login-box">
-    <h2>🐉 奶龙懒人备忘录</h2>
+    <h2>☁️ 小云懒人备忘录</h2>
     <div class="login-sub">登录后即可管理你的待办</div>
     <div class="login-tabs">
       <button class="login-tab active" id="tabLogin" onclick="switchTab('login')">登录</button>
@@ -749,8 +749,8 @@ const AI_TEMPLATES = [
 function generateAIMemo() {
   const idea = $("aiInput").value.trim();
   if (!idea) {
-    showToast("先在上方输入框写个想法，奶龙才能帮你生成～");
-    dragonSay("你倒是先写点啥呀 🤔");
+    showToast("先在上方输入框写个想法，小云才能帮你生成～");
+    cloudSay("你倒是先写点啥呀 🤔");
     return;
   }
 
@@ -769,46 +769,46 @@ function generateAIMemo() {
     $("contentInput").value = content;
 
     showToast("AI 已生成，检查后点击「添加备忘」保存 ✿");
-    dragonSay("帮你生成好了，要不要改改？");
+    cloudSay("帮你生成好了，要不要改改？");
   }, 800);
 }
 
 /* -------------------------------------------------------
-   3.7 奶龙彩蛋系统
+   3.7 小云彩蛋系统
    ------------------------------------------------------- */
 
 // 治愈摆烂短句库
-const DRAGON_QUOTES = [
+const CLOUD_QUOTES = [
   "今天的待办，明天的烦恼～",
   "摆烂不是不努力，是换个姿势努力",
-  "你这么能干，奶龙很欣慰",
+  "你这么能干，小云很欣慰",
   "先躺一会，待办又不会跑",
   "完成一条就够了，剩下的交给明天的自己",
-  "奶龙陪你，不孤单",
+  "小云陪你，不孤单",
   "别焦虑，慢慢来，事情总会...更多",
   "能拖到明天的事，何必今天做？",
   "你已经很棒了，记得喝水",
   "待办清单太长？闭上眼就好了",
-  "生活不止待办，还有奶龙",
+  "生活不止待办，还有小云",
   "今天的你，比昨天的你...差不多",
   "别卷了，吃点甜的吧",
-  "完成3条就歇歇，奶龙认证你了不起"
+  "完成3条就歇歇，小云认证你了不起"
 ];
 
-// 点击奶龙图标，随机弹出一句
-function dragonTalk() {
-  const q = DRAGON_QUOTES[Math.floor(Math.random() * DRAGON_QUOTES.length)];
-  dragonSay(q);
+// 点击小云图标，随机弹出一句
+function cloudTalk() {
+  const q = CLOUD_QUOTES[Math.floor(Math.random() * CLOUD_QUOTES.length)];
+  cloudSay(q);
 }
 
-// 显示奶龙气泡
-let dragonTimer = null;
-function dragonSay(msg) {
-  const b = $("dragonBubble");
-  b.textContent = "🐉 " + msg;
+// 显示小云气泡
+let cloudTimer = null;
+function cloudSay(msg) {
+  const b = $("cloudBubble");
+  b.textContent = "☁️ " + msg;
   b.classList.add("show");
-  clearTimeout(dragonTimer);
-  dragonTimer = setTimeout(() => b.classList.remove("show"), 3500);
+  clearTimeout(cloudTimer);
+  cloudTimer = setTimeout(() => b.classList.remove("show"), 3500);
 }
 
 // 庆祝弹窗
@@ -868,7 +868,7 @@ function renderList() {
   if (memoList.length === 0) {
     wrap.innerHTML = `
       <div class="empty">
-        <span class="emoji">🐉</span>
+        <span class="emoji">☁️</span>
         还没有备忘，先记一条吧～<br/>
         试试 AI 帮你生成！
       </div>`;
@@ -878,13 +878,13 @@ function renderList() {
   // 全部完成 → 庆祝彩蛋
   const allDone = memoList.every(m => m.isFinish);
   if (allDone) {
-    showCelebrate("太厉害了，所有备忘都完成了～<br/>奶龙说你是效率小能手！🐉✨");
+    showCelebrate("太厉害了，所有备忘都完成了～<br/>小云说你是效率小能手！☁️✨");
   }
 
-  // 待办太多 → 奶龙摆烂提示
+  // 待办太多 → 小云摆烂提示
   const unfinished = memoList.filter(m => !m.isFinish);
   if (unfinished.length >= 8) {
-    dragonSay("这么多待办...奶龙选择躺平 🐉");
+    cloudSay("这么多待办...小云选择躺平 ☁️");
   }
 
   wrap.innerHTML = memoList.map(m => `
@@ -917,7 +917,7 @@ async function submitMemo() {
   const content = $("contentInput").value.trim();
   if (!title) {
     showToast("标题不能为空");
-    dragonSay("写个标题嘛～");
+    cloudSay("写个标题嘛～");
     return;
   }
 
@@ -1005,7 +1005,7 @@ async function delMemo(id) {
     memoList = memoList.filter(m => m.objectId !== id);
     renderList();
     showToast("已删除");
-    dragonSay("删掉了，轻松一点～");
+    cloudSay("删掉了，轻松一点～");
   } catch (e) {
     showToast("删除失败：" + e.message);
   }
@@ -1094,9 +1094,9 @@ $("loginPass").addEventListener("keydown", (e) => {
     $("loginOverlay").classList.add("show");
   }
 
-  // 开场奶龙问候
+  // 开场小云问候
   setTimeout(() => {
-    dragonSay("嗨，我是奶龙，帮你记事的～");
+    cloudSay("嗨，我是小云，帮你记事的～");
   }, 1000);
 })();
 
