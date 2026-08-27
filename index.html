@@ -547,8 +547,9 @@ let BMOB_WORKING_HOST = null;
 let currentUser = null;
 let sessionToken = null;
 
+// 使用 localStorage 保持登录状态，关闭浏览器后下次打开仍保持登录
 function restoreSession() {
-  const saved = sessionStorage.getItem("bmob_session");
+  const saved = localStorage.getItem("bmob_session");
   if (saved) {
     try {
       const obj = JSON.parse(saved);
@@ -561,7 +562,7 @@ function restoreSession() {
 function saveSession(username, token) {
   currentUser = username;
   sessionToken = token;
-  sessionStorage.setItem("bmob_session", JSON.stringify({
+  localStorage.setItem("bmob_session", JSON.stringify({
     username: username, sessionToken: token
   }));
 }
@@ -569,7 +570,7 @@ function saveSession(username, token) {
 function clearSession() {
   currentUser = null;
   sessionToken = null;
-  sessionStorage.removeItem("bmob_session");
+  localStorage.removeItem("bmob_session");
 }
 
 function switchTab(mode) {
