@@ -439,11 +439,11 @@ body {
 
     <!-- AI 生成备忘 -->
     <button class="btn-ai" onclick="generateAIMemo()">✨ AI 帮我生成备忘内容</button>
-    <input type="text" id="aiInput" placeholder="输入想法（如：明天要做的事）让AI帮你生成" style="margin-bottom:10px;" />
+    <input type="text" id="aiInput" placeholder="输入想法（如：明天要做的事）让AI帮你生成" style="margin-bottom:10px;" autocomplete="off" />
 
     <!-- 标题/内容输入 -->
-    <input type="text" id="titleInput" maxlength="50" placeholder="备忘标题（如：拿快递）" />
-    <textarea id="contentInput" maxlength="500" placeholder="备注内容（选填，可换行）"></textarea>
+    <input type="text" id="titleInput" maxlength="50" placeholder="备忘标题（如：拿快递）" autocomplete="off" />
+    <textarea id="contentInput" maxlength="500" placeholder="备注内容（选填，可换行）" autocomplete="off"></textarea>
 
     <!-- 标签选择 -->
     <div class="tag-row" id="tagPicker">
@@ -506,8 +506,8 @@ body {
       <button class="login-tab active" id="tabLogin" onclick="switchTab('login')">登录</button>
       <button class="login-tab" id="tabReg" onclick="switchTab('register')">注册</button>
     </div>
-    <input type="text" id="loginUser" maxlength="20" placeholder="用户名（3-20位）" />
-    <input type="password" id="loginPass" maxlength="32" placeholder="密码（6-32位）" />
+    <input type="text" id="loginUser" maxlength="20" placeholder="用户名（3-20位）" autocomplete="username" />
+    <input type="password" id="loginPass" maxlength="32" placeholder="密码（6-32位）" autocomplete="current-password" />
     <button class="btn btn-primary" id="loginBtn" onclick="doLogin()">登录</button>
   </div>
 </div>
@@ -1376,6 +1376,14 @@ $("loginPass").addEventListener("keydown", (e) => {
 
 (function init() {
   initTheme();
+  // 延迟清除浏览器自动填充的内容（防止用户名被填入备忘输入框）
+  setTimeout(() => {
+    $("aiInput").value = "";
+    $("titleInput").value = "";
+    $("contentInput").value = "";
+    $("loginUser").value = "";
+    $("loginPass").value = "";
+  }, 100);
   restoreSession();
 
   if (currentUser && sessionToken) {
