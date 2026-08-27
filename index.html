@@ -3,11 +3,11 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>小云懒人备忘录 · 躺平也能记事</title>
+<title>懒人备忘录 · 躺平也能记事</title>
 
 <!--
 ================================================================================
-  小云懒人备忘录 v3.0（单文件版）
+  懒人备忘录 v4.0（单文件版）
   技术栈：原生 HTML + CSS + JavaScript（零框架、零外部依赖）
   后端：Bmob 后端云 REST API（数据库 + 文件存储）
   定位：面向普通学生、上班族的日常待办/琐事记录工具
@@ -26,7 +26,8 @@
     isFinish  Boolean   是否已完成
     imgUrl    String    图片URL（Bmob文件存储返回的链接）
     username  String    创建者用户名（用于用户数据隔离）
-  注意：imgUrl 和 username 字段需在 Bmob 后台手动新增，客户端不可见不要勾选。
+    tag       String    标签（工作/生活/学习/灵感，选填）
+  注意：imgUrl、username、tag 字段需在 Bmob 后台手动新增，客户端不可见不要勾选。
 
   ★★★ Bmob 能力使用说明 ★★★
   - 数据库：Memo 表存储备忘录数据（增删改查）
@@ -59,7 +60,6 @@
   --done-bg:   #E8E0D0;
   --btn-del:   #FFE0E0;
   --btn-del-t: #c0506a;
-  --theme-name: "奶油黄";
 }
 [data-theme="pink"] {
   --bg:        #FFE4F0;
@@ -74,7 +74,6 @@
   --done-bg:   #F0DDE8;
   --btn-del:   #FFD0E0;
   --btn-del-t: #c0506a;
-  --theme-name: "浅粉";
 }
 [data-theme="mint"] {
   --bg:        #D9F5E9;
@@ -89,7 +88,6 @@
   --done-bg:   #D5EDE0;
   --btn-del:   #FFE0E0;
   --btn-del-t: #c0506a;
-  --theme-name: "薄荷绿";
 }
 
 /* ---- 2. 基础重置 ---- */
@@ -133,35 +131,26 @@ body {
 .theme-dot[data-t="mint"]  { background: #D9F5E9; border-color: #34c08a; }
 .theme-dot.active { border-width: 3px; }
 
-/* ---- 4. 标题区 + 小云图标 ---- */
-.header { text-align: center; margin-bottom: 20px; position: relative; }
-.header h1 {
-  font-size: 24px; color: var(--text);
-  display: inline-flex; align-items: center; gap: 6px;
-}
+/* ---- 4. 标题区 ---- */
+.header { text-align: center; margin-bottom: 16px; }
+.header h1 { font-size: 24px; color: var(--text); }
 .header .subtitle { font-size: 13px; color: var(--text-l); margin-top: 4px; }
-.cloud-icon {
-  font-size: 28px; cursor: pointer; display: inline-block;
-  transition: transform 0.3s; user-select: none;
-}
-.cloud-icon:hover { transform: rotate(-8deg) scale(1.1); }
-.cloud-icon:active { transform: scale(0.9); }
 
-/* 小云气泡 */
-.cloud-bubble {
-  position: fixed; top: 15%; left: 50%; transform: translateX(-50%) scale(0);
-  background: var(--card); border-radius: 18px; padding: 14px 20px;
-  font-size: 14px; color: var(--text); line-height: 1.6;
-  box-shadow: 0 8px 28px var(--shadow); z-index: 200;
-  max-width: 320px; text-align: center; pointer-events: none;
-  transition: transform 0.35s ease, opacity 0.3s ease; opacity: 0;
+/* ---- 5. 统计看板 ---- */
+.stats-board {
+  display: flex; justify-content: space-around;
+  background: var(--bg); border-radius: 16px; padding: 14px 10px;
+  margin-bottom: 16px; box-shadow: inset 0 0 0 1.5px var(--border);
 }
-.cloud-bubble.show { transform: translateX(-50%) scale(1); opacity: 1; }
+.stat-item { text-align: center; flex: 1; }
+.stat-num { font-size: 22px; font-weight: 700; color: var(--primary); }
+.stat-label { font-size: 12px; color: var(--text-l); margin-top: 2px; }
+.stat-divider { width: 1px; background: var(--border); margin: 4px 0; }
 
-/* ---- 5. 输入表单 ---- */
+/* ---- 6. 输入表单 ---- */
 .form-card {
   background: var(--bg); border-radius: 20px; padding: 16px 14px;
-  margin-bottom: 18px; box-shadow: inset 0 0 0 1.5px var(--border);
+  margin-bottom: 16px; box-shadow: inset 0 0 0 1.5px var(--border);
 }
 .form-card input[type="text"],
 .form-card textarea {
@@ -184,11 +173,20 @@ body {
 .btn-upload {
   border: none; cursor: pointer; font-family: inherit;
   font-size: 13px; border-radius: 12px; padding: 8px 14px;
-  background: var(--accent); color: var(--text);
-  transition: opacity 0.2s;
+  background: var(--accent); color: var(--text); transition: opacity 0.2s;
 }
 .btn-upload:hover { opacity: 0.85; }
 #fileInput { display: none; }
+
+/* 标签选择 */
+.tag-row { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
+.tag-pick {
+  border: 1.5px solid var(--border); background: var(--card);
+  border-radius: 10px; padding: 5px 12px; font-size: 13px;
+  cursor: pointer; font-family: inherit; color: var(--text-l); transition: all 0.2s;
+}
+.tag-pick.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+.tag-pick:hover { opacity: 0.85; }
 
 /* 按钮 */
 .btn {
@@ -218,7 +216,28 @@ body {
   background: var(--btn-del); color: var(--btn-del-t);
 }
 
-/* ---- 6. 列表 ---- */
+/* ---- 7. 工具栏（标签筛选 + 导出） ---- */
+.toolbar {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; margin-bottom: 12px; flex-wrap: wrap;
+}
+.tag-filter { display: flex; gap: 6px; flex-wrap: wrap; flex: 1; }
+.tag-filter-btn {
+  border: 1.5px solid var(--border); background: var(--card);
+  border-radius: 10px; padding: 5px 11px; font-size: 12px;
+  cursor: pointer; font-family: inherit; color: var(--text-l); transition: all 0.2s;
+}
+.tag-filter-btn.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+.tag-filter-btn:hover { opacity: 0.85; }
+.btn-export {
+  border: none; cursor: pointer; font-family: inherit;
+  font-size: 12px; border-radius: 10px; padding: 6px 12px;
+  background: var(--accent); color: var(--text); transition: opacity 0.2s;
+  white-space: nowrap;
+}
+.btn-export:hover { opacity: 0.85; }
+
+/* ---- 8. 列表 ---- */
 .memo-list { display: flex; flex-direction: column; gap: 12px; }
 .memo-item {
   background: var(--bg); border-radius: 18px; padding: 14px 16px;
@@ -240,6 +259,16 @@ body {
 .memo-desc { font-size: 13px; color: var(--text-l); margin-top: 3px; word-break: break-word; white-space: pre-wrap; }
 .memo-img { width: 100%; max-height: 160px; object-fit: cover; border-radius: 12px; margin-top: 8px; }
 
+.memo-meta { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+.tag-badge {
+  font-size: 11px; border-radius: 6px; padding: 2px 8px;
+  font-weight: 600; color: #fff;
+}
+.tag-badge[data-tag="工作"] { background: #5b8def; }
+.tag-badge[data-tag="生活"] { background: #34c08a; }
+.tag-badge[data-tag="学习"] { background: #b46ee0; }
+.tag-badge[data-tag="灵感"] { background: #f0a040; }
+
 .memo-actions { display: flex; gap: 8px; margin-top: 8px; }
 .btn-mini {
   border: none; cursor: pointer; font-family: inherit;
@@ -254,7 +283,7 @@ body {
 .empty { text-align: center; padding: 36px 16px; color: var(--text-l); }
 .empty .emoji { font-size: 40px; display: block; margin-bottom: 8px; }
 
-/* ---- 7. 覆盖层 ---- */
+/* ---- 9. 覆盖层 ---- */
 .loading-mask {
   position: fixed; inset: 0; background: rgba(255,255,255,0.7);
   z-index: 500; display: none; align-items: center; justify-content: center;
@@ -293,9 +322,20 @@ body {
   70%  { transform: scale(1.08); opacity: 1; }
   100% { transform: scale(1); }
 }
-.celebrate-box .cloud { font-size: 56px; display: block; margin-bottom: 10px; }
+.celebrate-box .icon { font-size: 56px; display: block; margin-bottom: 10px; }
 .celebrate-box h2 { font-size: 20px; color: var(--text); margin-bottom: 6px; }
 .celebrate-box p { font-size: 14px; color: var(--text-l); line-height: 1.6; margin-bottom: 16px; }
+
+/* 撒花动画 */
+.confetti-piece {
+  position: fixed; width: 8px; height: 8px; z-index: 650;
+  pointer-events: none; border-radius: 2px;
+  animation: confetti-fall 1.2s ease-out forwards;
+}
+@keyframes confetti-fall {
+  0%   { transform: translateY(0) rotate(0); opacity: 1; }
+  100% { transform: translateY(200px) rotate(360deg); opacity: 0; }
+}
 
 /* 登录弹窗 */
 .login-overlay {
@@ -329,13 +369,14 @@ body {
 .login-tab.active { background: linear-gradient(135deg, var(--primary-l), var(--primary)); color: #fff; }
 .login-tab:not(.active) { background: var(--bg); color: var(--text-l); }
 
-/* ---- 8. 响应式 ---- */
+/* ---- 10. 响应式 ---- */
 @media (max-width: 600px) {
   body { padding: 10px 8px 30px; }
   .container { padding: 18px 14px 22px; border-radius: 22px; }
   .header h1 { font-size: 20px; }
   .memo-title { font-size: 15px; }
   .btn-mini { padding: 6px 9px; font-size: 12px; }
+  .stat-num { font-size: 18px; }
 }
 @media (min-width: 768px) {
   body { padding: 30px 16px 60px; }
@@ -364,13 +405,28 @@ body {
     </div>
   </div>
 
-  <!-- 标题区 + 小云图标 -->
+  <!-- 标题区 -->
   <div class="header">
-    <h1>
-      <span class="cloud-icon" onclick="cloudTalk()">☁️</span>
-      小云懒人备忘录
-    </h1>
+    <h1>📝 懒人备忘录</h1>
     <div class="subtitle">躺平也要记事，琐事不遗漏 ✿</div>
+  </div>
+
+  <!-- 统计看板 -->
+  <div class="stats-board" id="statsBoard" style="display:none;">
+    <div class="stat-item">
+      <div class="stat-num" id="statTotal">0</div>
+      <div class="stat-label">📋 总数</div>
+    </div>
+    <div class="stat-divider"></div>
+    <div class="stat-item">
+      <div class="stat-num" id="statDone">0</div>
+      <div class="stat-label">✅ 已完成</div>
+    </div>
+    <div class="stat-divider"></div>
+    <div class="stat-item">
+      <div class="stat-num" id="statTodo">0</div>
+      <div class="stat-label">⏳ 待完成</div>
+    </div>
   </div>
 
   <!-- 输入表单 -->
@@ -389,6 +445,15 @@ body {
     <input type="text" id="titleInput" maxlength="50" placeholder="备忘标题（如：拿快递）" />
     <textarea id="contentInput" maxlength="500" placeholder="备注内容（选填，可换行）"></textarea>
 
+    <!-- 标签选择 -->
+    <div class="tag-row" id="tagPicker">
+      <span style="font-size:13px;color:var(--text-l);align-self:center;margin-right:4px;">标签</span>
+      <button class="tag-pick" data-tag="工作" onclick="pickTag('工作')">工作</button>
+      <button class="tag-pick" data-tag="生活" onclick="pickTag('生活')">生活</button>
+      <button class="tag-pick" data-tag="学习" onclick="pickTag('学习')">学习</button>
+      <button class="tag-pick" data-tag="灵感" onclick="pickTag('灵感')">灵感</button>
+    </div>
+
     <!-- 图片上传 -->
     <div class="img-upload-row">
       <img class="img-preview" id="imgPreview" alt="预览" />
@@ -400,13 +465,22 @@ body {
     <button class="btn btn-primary" id="submitBtn" onclick="submitMemo()">＋ 添加备忘</button>
   </div>
 
+  <!-- 工具栏：标签筛选 + 导出 -->
+  <div class="toolbar" id="toolbar" style="display:none;">
+    <div class="tag-filter">
+      <button class="tag-filter-btn active" data-filter="all" onclick="filterTag('all')">全部</button>
+      <button class="tag-filter-btn" data-filter="工作" onclick="filterTag('工作')">工作</button>
+      <button class="tag-filter-btn" data-filter="生活" onclick="filterTag('生活')">生活</button>
+      <button class="tag-filter-btn" data-filter="学习" onclick="filterTag('学习')">学习</button>
+      <button class="tag-filter-btn" data-filter="灵感" onclick="filterTag('灵感')">灵感</button>
+    </div>
+    <button class="btn-export" onclick="exportMemos()">📋 导出全部</button>
+  </div>
+
   <!-- 备忘列表 -->
   <div class="memo-list" id="memoList"></div>
 
 </div>
-
-<!-- 小云气泡 -->
-<div class="cloud-bubble" id="cloudBubble"></div>
 
 <!-- 加载遮罩 -->
 <div class="loading-mask" id="loadingMask"><div class="spinner"></div></div>
@@ -416,9 +490,9 @@ body {
 <!-- 庆祝弹窗 -->
 <div class="celebrate" id="celebrate">
   <div class="celebrate-box">
-    <span class="cloud">☁️</span>
+    <span class="icon">🎉</span>
     <h2>全部搞定啦！</h2>
-    <p id="celebrateMsg">太厉害了，所有备忘都完成了～<br/>小云说你是效率小能手！</p>
+    <p id="celebrateMsg">太厉害了，所有备忘都完成了～</p>
     <button class="btn btn-primary" onclick="closeCelebrate()">好耶！</button>
   </div>
 </div>
@@ -426,7 +500,7 @@ body {
 <!-- 登录弹窗 -->
 <div class="login-overlay" id="loginOverlay">
   <div class="login-box">
-    <h2>☁️ 小云懒人备忘录</h2>
+    <h2>📝 懒人备忘录</h2>
     <div class="login-sub">登录后即可管理你的待办</div>
     <div class="login-tabs">
       <button class="login-tab active" id="tabLogin" onclick="switchTab('login')">登录</button>
@@ -455,6 +529,7 @@ const REST_API_KEY   = "9099ac88fc936a9ea14cff5e0844ac30";
 // ▲▲▲ 请替换为你自己的 Bmob 密钥 ▲▲▲
 
 const TABLE_NAME     = "Memo";
+const TAGS = ["工作", "生活", "学习", "灵感"];
 
 // Bmob API 域名列表（按优先级排序，自动探测可用域名）
 const BMOB_API_HOSTS = [
@@ -467,13 +542,11 @@ let BMOB_WORKING_HOST = null;
 
 /* -------------------------------------------------------
    3.2 用户认证系统
-   ★★★ Bmob 后台 Memo 表需新增 username 字段（String），用于按用户筛选数据
    ------------------------------------------------------- */
 
 let currentUser = null;
 let sessionToken = null;
 
-// 从 sessionStorage 恢复登录状态
 function restoreSession() {
   const saved = sessionStorage.getItem("bmob_session");
   if (saved) {
@@ -499,7 +572,6 @@ function clearSession() {
   sessionStorage.removeItem("bmob_session");
 }
 
-// 切换登录/注册标签
 function switchTab(mode) {
   const isLogin = (mode === "login");
   $("tabLogin").classList.toggle("active", isLogin);
@@ -508,34 +580,27 @@ function switchTab(mode) {
   $("loginBtn").onclick = isLogin ? doLogin : doRegister;
 }
 
-// 注册新用户
 async function doRegister() {
   const username = $("loginUser").value.trim();
   const password = $("loginPass").value.trim();
   if (username.length < 3) { showToast("用户名至少 3 位"); return; }
   if (password.length < 6) { showToast("密码至少 6 位"); return; }
-
   showLoading(true);
   try {
     const data = await bmobRequest("POST", "/users", { username, password });
     if (data.sessionToken) {
       saveSession(username, data.sessionToken);
       onLoginSuccess();
-      showToast("注册成功，欢迎加入 ✿");
+      showToast("注册成功 ✿");
     }
-  } catch (e) {
-    showToast(e.message);
-  } finally {
-    showLoading(false);
-  }
+  } catch (e) { showToast(e.message); }
+  finally { showLoading(false); }
 }
 
-// 登录
 async function doLogin() {
   const username = $("loginUser").value.trim();
   const password = $("loginPass").value.trim();
   if (!username || !password) { showToast("请输入用户名和密码"); return; }
-
   showLoading(true);
   try {
     const data = await bmobRequest("GET",
@@ -546,25 +611,24 @@ async function doLogin() {
       onLoginSuccess();
       showToast("登录成功 ✿");
     }
-  } catch (e) {
-    showToast(e.message);
-  } finally {
-    showLoading(false);
-  }
+  } catch (e) { showToast(e.message); }
+  finally { showLoading(false); }
 }
 
-// 登录成功
 function onLoginSuccess() {
   $("loginOverlay").classList.remove("show");
   $("userBar").style.display = "block";
+  $("statsBoard").style.display = "flex";
+  $("toolbar").style.display = "flex";
   $("userName").textContent = currentUser;
   fetchMemos();
 }
 
-// 退出
 function logout() {
   clearSession();
   $("userBar").style.display = "none";
+  $("statsBoard").style.display = "none";
+  $("toolbar").style.display = "none";
   $("loginOverlay").classList.add("show");
   $("loginUser").value = "";
   $("loginPass").value = "";
@@ -573,22 +637,19 @@ function logout() {
 }
 
 /* -------------------------------------------------------
-   3.3 主题切换（localStorage 存储偏好，不影响备忘数据）
+   3.3 主题切换
    ------------------------------------------------------- */
 
 function setTheme(name) {
   document.body.setAttribute("data-theme", name);
   localStorage.setItem("memo_theme", name);
-  // 更新选中状态
   document.querySelectorAll(".theme-dot").forEach(d => {
     d.classList.toggle("active", d.getAttribute("data-t") === name);
   });
 }
 
-// 初始化主题
 function initTheme() {
-  const saved = localStorage.getItem("memo_theme") || "cream";
-  setTheme(saved);
+  setTheme(localStorage.getItem("memo_theme") || "cream");
 }
 
 /* -------------------------------------------------------
@@ -617,15 +678,9 @@ function escapeHtml(str) {
 }
 
 /* -------------------------------------------------------
-   3.5 Bmob 请求引擎（多域名降级 + session token）
+   3.5 Bmob 请求引擎
    ------------------------------------------------------- */
 
-/**
- * 统一 Bmob REST API 请求函数
- * @param {string} method - GET / POST / PUT / DELETE
- * @param {string} path   - API 路径（如 /classes/Memo）
- * @param {object} body   - 请求体（可选）
- */
 async function bmobRequest(method, path, body) {
   const fullPath = BMOB_API_PATH + path;
   const headers = {
@@ -633,53 +688,35 @@ async function bmobRequest(method, path, body) {
     "X-Bmob-REST-API-Key": REST_API_KEY,
     "Content-Type": "application/json"
   };
-  // 已登录用户附带会话令牌
-  if (sessionToken) {
-    headers["X-Bmob-Session-Token"] = sessionToken;
-  }
+  if (sessionToken) headers["X-Bmob-Session-Token"] = sessionToken;
 
   const hosts = BMOB_WORKING_HOST ? [BMOB_WORKING_HOST] : BMOB_API_HOSTS;
 
   for (let i = 0; i < hosts.length; i++) {
     const host = hosts[i];
-    const url = host + fullPath;
     try {
       const opts = { method, headers };
       if (body && method !== "GET") opts.body = JSON.stringify(body);
-
-      const resp = await fetch(url, opts);
+      const resp = await fetch(host + fullPath, opts);
       let data = null;
       const text = await resp.text();
       if (text) { try { data = JSON.parse(text); } catch (e) {} }
-
-      if (!resp.ok) {
-        const errMsg = (data && (data.error || data.message)) || ("HTTP " + resp.status);
-        throw new Error(errMsg);
-      }
+      if (!resp.ok) throw new Error((data && (data.error || data.message)) || ("HTTP " + resp.status));
       BMOB_WORKING_HOST = host;
       return data;
-
     } catch (err) {
-      // 网络错误或 CORS 失败，尝试下一个域名
       if (i < hosts.length - 1) continue;
       throw err;
     }
   }
 }
 
-/**
- * 上传图片到 Bmob 文件存储
- * 调用 POST /1/files/{filename}
- * ★★★ 此函数使用 Bmob【文件存储】能力 ★★★
- */
 async function uploadImgToBmob(file) {
   const fileName = "memo_" + Date.now() + "_" + file.name;
   const hosts = BMOB_WORKING_HOST ? [BMOB_WORKING_HOST] : BMOB_API_HOSTS;
-
   for (let i = 0; i < hosts.length; i++) {
     const host = hosts[i];
     const url = host + BMOB_API_PATH + "/files/" + encodeURIComponent(fileName);
-
     try {
       const resp = await fetch(url, {
         method: "POST",
@@ -691,15 +728,10 @@ async function uploadImgToBmob(file) {
         },
         body: file
       });
-
       let data = null;
       const text = await resp.text();
       if (text) { try { data = JSON.parse(text); } catch (e) {} }
-
-      if (resp.ok && data && data.url) {
-        BMOB_WORKING_HOST = host;
-        return data.url;
-      }
+      if (resp.ok && data && data.url) { BMOB_WORKING_HOST = host; return data.url; }
       if (i < hosts.length - 1) continue;
       throw new Error(data && data.error ? data.error : "上传失败");
     } catch (err) {
@@ -711,124 +743,84 @@ async function uploadImgToBmob(file) {
 
 /* -------------------------------------------------------
    3.6 AI 备忘生成器（前端模拟）
-   -------------------------------------------------------
-   ★★★ 此处是产品内置 AI 功能，不是用 AI 写代码 ★★★
-   ★★★ 产品页面自带的 AI 交互能力，拿 Bmob+AI 融合创意分 ★★★
-
-   替换为真实大模型的方法：
-   1. 注册百度文心一言/阿里通义千问/智谱ChatGLM，获取 API Key
-   2. 将下面的 generateAIMemo() 函数改为调用真实接口：
-      const resp = await fetch("https://aip.baidubce.com/...", {
-        method: "POST",
-        headers: { "Authorization": "Bearer 你的APIKey" },
-        body: JSON.stringify({ messages: [{role:"user", content: prompt}] })
-      });
-   3. 解析返回结果填入标题和内容即可
+   ★★★ 产品内置 AI 交互能力，拿 Bmob+AI 融合创意分 ★★★
+   替换为真实大模型：见下方注释
    ------------------------------------------------------- */
 
-// 模板库：日常待办场景
 const AI_TEMPLATES = [
-  { title: "拿快递", desc: "包裹在驿站，再不取要退回了！" },
-  { title: "给家里打电话", desc: "已经一周没打了，记得问候爸妈" },
-  { title: "整理桌面", desc: "文件堆积如山，花15分钟收拾一下" },
-  { title: "喝水打卡", desc: "一天8杯水，现在第几杯了？" },
-  { title: "交电费", desc: "检查余额，别等停电才想起" },
-  { title: "回复消息", desc: "有好几条未回消息，别让别人等太久" },
-  { title: "预约洗牙", desc: "半年没看牙医了，该约了" },
-  { title: "整理收藏夹", desc: "收藏了100条从没看过，清理一波" },
-  { title: "买日用品", desc: "纸巾/洗衣液快没了，趁周末囤货" },
-  { title: "运动打卡", desc: "哪怕只做10个深蹲，今天也算运动了" },
-  { title: "复盘本周", desc: "写3条做得好的，1条待改进的" },
-  { title: "充公交卡", desc: "余额不足，通勤路上记得充" }
+  { title: "拿快递", desc: "包裹在驿站，再不取要退回了！", tag: "生活" },
+  { title: "给家里打电话", desc: "已经一周没打了，记得问候爸妈", tag: "生活" },
+  { title: "整理桌面", desc: "文件堆积如山，花15分钟收拾一下", tag: "工作" },
+  { title: "喝水打卡", desc: "一天8杯水，现在第几杯了？", tag: "生活" },
+  { title: "交电费", desc: "检查余额，别等停电才想起", tag: "生活" },
+  { title: "回复消息", desc: "有好几条未回消息，别让别人等太久", tag: "工作" },
+  { title: "整理收藏夹", desc: "收藏了100条从没看过，清理一波", tag: "生活" },
+  { title: "买日用品", desc: "纸巾/洗衣液快没了，趁周末囤货", tag: "生活" },
+  { title: "运动打卡", desc: "哪怕只做10个深蹲，今天也算运动了", tag: "生活" },
+  { title: "复盘本周", desc: "写3条做得好的，1条待改进的", tag: "工作" },
+  { title: "背单词", desc: "每天20个，坚持就是胜利", tag: "学习" },
+  { title: "看一节网课", desc: "拖了很久的那门课，今天看一节", tag: "学习" },
+  { title: "记录灵感", desc: "突然想到的点子，先记下来再说", tag: "灵感" },
+  { title: "充公交卡", desc: "余额不足，通勤路上记得充", tag: "生活" }
 ];
 
-/**
- * AI 生成备忘内容（前端模拟版）
- * 根据用户输入的想法，随机组合生成标题和内容
- */
+// 替换为真实大模型的方法：
+// 1. 注册百度文心/阿里通义/智谱ChatGLM，获取 API Key
+// 2. 将 generateAIMemo() 改为调用真实接口
+// 3. const resp = await fetch("https://aip.baidubce.com/...", {
+//      method: "POST",
+//      headers: { "Authorization": "Bearer 你的APIKey" },
+//      body: JSON.stringify({ messages: [{role:"user", content: prompt}] })
+//    });
+
 function generateAIMemo() {
   const idea = $("aiInput").value.trim();
-  if (!idea) {
-    showToast("先在上方输入框写个想法，小云才能帮你生成～");
-    cloudSay("你倒是先写点啥呀 🤔");
-    return;
-  }
+  if (!idea) { showToast("先在上方输入框写个想法～"); return; }
 
   showLoading(true);
-  // 模拟 AI 思考延迟
   setTimeout(() => {
     showLoading(false);
-    // 从模板库随机取一个
     const tpl = AI_TEMPLATES[Math.floor(Math.random() * AI_TEMPLATES.length)];
-    // 把用户想法融入内容
-    const title = tpl.title;
-    const content = "【" + idea + "】\n" + tpl.desc;
-
-    $("titleInput").value = title;
-    $("contentInput").focus();
-    $("contentInput").value = content;
-
-    showToast("AI 已生成，检查后点击「添加备忘」保存 ✿");
-    cloudSay("帮你生成好了，要不要改改？");
+    $("titleInput").value = tpl.title;
+    $("contentInput").value = "【" + idea + "】\n" + tpl.desc;
+    pickTag(tpl.tag);
+    showToast("AI 已生成，检查后点击「添加备忘」✿");
   }, 800);
 }
 
 /* -------------------------------------------------------
-   3.7 小云彩蛋系统
-   ------------------------------------------------------- */
-
-// 治愈摆烂短句库
-const CLOUD_QUOTES = [
-  "今天的待办，明天的烦恼～",
-  "摆烂不是不努力，是换个姿势努力",
-  "你这么能干，小云很欣慰",
-  "先躺一会，待办又不会跑",
-  "完成一条就够了，剩下的交给明天的自己",
-  "小云陪你，不孤单",
-  "别焦虑，慢慢来，事情总会...更多",
-  "能拖到明天的事，何必今天做？",
-  "你已经很棒了，记得喝水",
-  "待办清单太长？闭上眼就好了",
-  "生活不止待办，还有小云",
-  "今天的你，比昨天的你...差不多",
-  "别卷了，吃点甜的吧",
-  "完成3条就歇歇，小云认证你了不起"
-];
-
-// 点击小云图标，随机弹出一句
-function cloudTalk() {
-  const q = CLOUD_QUOTES[Math.floor(Math.random() * CLOUD_QUOTES.length)];
-  cloudSay(q);
-}
-
-// 显示小云气泡
-let cloudTimer = null;
-function cloudSay(msg) {
-  const b = $("cloudBubble");
-  b.textContent = "☁️ " + msg;
-  b.classList.add("show");
-  clearTimeout(cloudTimer);
-  cloudTimer = setTimeout(() => b.classList.remove("show"), 3500);
-}
-
-// 庆祝弹窗
-function showCelebrate(msg) {
-  $("celebrateMsg").innerHTML = msg;
-  $("celebrate").classList.add("show");
-}
-function closeCelebrate() {
-  $("celebrate").classList.remove("show");
-}
-
-/* -------------------------------------------------------
-   3.8 状态变量 & 数据操作
+   3.7 状态变量 & 标签系统
    ------------------------------------------------------- */
 
 let memoList = [];
 let editingId = null;
 let pendingImgUrl = null;
+let selectedTag = null;        // 表单选中的标签
+let activeFilter = "all";     // 列表筛选标签
 
-/** 查询当前用户的备忘（按时间倒序，按 username 筛选） */
+/** 表单中选择标签 */
+function pickTag(tag) {
+  // 再次点击取消选中
+  selectedTag = (selectedTag === tag) ? null : tag;
+  document.querySelectorAll("#tagPicker .tag-pick").forEach(b => {
+    b.classList.toggle("active", b.getAttribute("data-tag") === selectedTag);
+  });
+}
+
+/** 列表筛选标签 */
+function filterTag(tag) {
+  activeFilter = tag;
+  document.querySelectorAll(".tag-filter-btn").forEach(b => {
+    b.classList.toggle("active", b.getAttribute("data-filter") === tag);
+  });
+  renderList();
+}
+
+/* -------------------------------------------------------
+   3.8 数据操作
+   ------------------------------------------------------- */
+
+/** 查询当前用户的备忘 */
 async function fetchMemos() {
   const where = JSON.stringify({ username: currentUser });
   const data = await bmobRequest("GET",
@@ -837,15 +829,15 @@ async function fetchMemos() {
   renderList();
 }
 
-/** 新增备忘（返回创建后的完整对象） */
-async function createMemo(title, content, imgUrl) {
+/** 新增备忘（返回完整对象） */
+async function createMemo(title, content, imgUrl, tag) {
   const body = { title, content, isFinish: false, username: currentUser };
   if (imgUrl) body.imgUrl = imgUrl;
+  if (tag) body.tag = tag;
   const data = await bmobRequest("POST", "/classes/" + TABLE_NAME, body);
   showToast("备忘已添加 ✿");
-  // 返回新对象（Bmob POST 返回 objectId + createdAt）
   return { objectId: data.objectId, title, content, isFinish: false,
-           imgUrl: imgUrl || null, username: currentUser, createdAt: data.createdAt };
+           imgUrl: imgUrl || null, username: currentUser, tag: tag || null, createdAt: data.createdAt };
 }
 
 /** 修改备忘 */
@@ -859,38 +851,50 @@ async function deleteMemo(id) {
 }
 
 /* -------------------------------------------------------
-   3.9 渲染列表
+   3.9 统计看板更新
+   ------------------------------------------------------- */
+
+function updateStats() {
+  const total = memoList.length;
+  const done = memoList.filter(m => m.isFinish).length;
+  const todo = total - done;
+  $("statTotal").textContent = total;
+  $("statDone").textContent = done;
+  $("statTodo").textContent = todo;
+}
+
+/* -------------------------------------------------------
+   3.10 渲染列表
    ------------------------------------------------------- */
 
 function renderList() {
+  updateStats();
   const wrap = $("memoList");
 
-  if (memoList.length === 0) {
+  // 按标签筛选
+  const filtered = (activeFilter === "all")
+    ? memoList
+    : memoList.filter(m => m.tag === activeFilter);
+
+  if (filtered.length === 0) {
     wrap.innerHTML = `
       <div class="empty">
-        <span class="emoji">☁️</span>
-        还没有备忘，先记一条吧～<br/>
-        试试 AI 帮你生成！
+        <span class="emoji">📝</span>
+        ${memoList.length === 0 ? '还没有备忘，先记一条吧～<br/>试试 AI 帮你生成！' : '该标签下没有备忘～'}
       </div>`;
     return;
   }
 
-  // 全部完成 → 庆祝彩蛋
-  const allDone = memoList.every(m => m.isFinish);
+  // 全部完成 → 庆祝弹窗
+  const allDone = memoList.length > 0 && memoList.every(m => m.isFinish);
   if (allDone) {
-    showCelebrate("太厉害了，所有备忘都完成了～<br/>小云说你是效率小能手！☁️✨");
+    showCelebrate("太厉害了，所有备忘都完成了～🎉");
   }
 
-  // 待办太多 → 小云摆烂提示
-  const unfinished = memoList.filter(m => !m.isFinish);
-  if (unfinished.length >= 8) {
-    cloudSay("这么多待办...小云选择躺平 ☁️");
-  }
-
-  wrap.innerHTML = memoList.map(m => `
+  wrap.innerHTML = filtered.map(m => `
     <div class="memo-item ${m.isFinish ? 'done' : ''}" data-id="${m.objectId}">
       <div class="memo-row">
-        <div class="memo-check ${m.isFinish ? 'checked' : ''}" onclick="toggleFinish('${m.objectId}', ${!m.isFinish})">
+        <div class="memo-check ${m.isFinish ? 'checked' : ''}" onclick="toggleFinish('${m.objectId}', ${!m.isFinish}, this)">
           ${m.isFinish ? '✓' : ''}
         </div>
         <div class="memo-content">
@@ -898,6 +902,9 @@ function renderList() {
           ${m.content ? `<div class="memo-desc">${escapeHtml(m.content)}</div>` : ''}
           ${m.imgUrl ? `<img class="memo-img" src="${escapeHtml(m.imgUrl)}" alt="图片" loading="lazy" />` : ''}
         </div>
+      </div>
+      <div class="memo-meta">
+        ${m.tag ? `<span class="tag-badge" data-tag="${escapeHtml(m.tag)}">${escapeHtml(m.tag)}</span>` : ''}
       </div>
       <div class="memo-actions">
         <button class="btn-mini btn-edit" onclick="startEdit('${m.objectId}')">编辑</button>
@@ -908,35 +915,48 @@ function renderList() {
 }
 
 /* -------------------------------------------------------
-   3.10 操作函数
+   3.11 撒花动画
    ------------------------------------------------------- */
 
-// 提交（新增或更新）—— 本地直接更新列表，不重新请求
+function confetti(x, y) {
+  const colors = ["#f0b429", "#ff7eb5", "#34c08a", "#5b8def", "#b46ee0", "#f0a040"];
+  for (let i = 0; i < 12; i++) {
+    const piece = document.createElement("div");
+    piece.className = "confetti-piece";
+    piece.style.left = (x + (Math.random() - 0.5) * 60) + "px";
+    piece.style.top = y + "px";
+    piece.style.background = colors[Math.floor(Math.random() * colors.length)];
+    piece.style.animationDelay = (Math.random() * 0.2) + "s";
+    piece.style.transform = `rotate(${Math.random() * 360}deg)`;
+    document.body.appendChild(piece);
+    setTimeout(() => piece.remove(), 1300);
+  }
+}
+
+/* -------------------------------------------------------
+   3.12 操作函数
+   ------------------------------------------------------- */
+
+// 提交（新增或更新）
 async function submitMemo() {
   const title = $("titleInput").value.trim();
   const content = $("contentInput").value.trim();
-  if (!title) {
-    showToast("标题不能为空");
-    cloudSay("写个标题嘛～");
-    return;
-  }
+  if (!title) { showToast("标题不能为空"); return; }
 
   showLoading(true);
   try {
     if (editingId) {
-      // 编辑模式：更新本地列表
       const patch = { title, content };
       if (pendingImgUrl) patch.imgUrl = pendingImgUrl;
+      if (selectedTag) patch.tag = selectedTag;
       await updateMemo(editingId, patch);
-      // 直接更新本地对象，不重新请求
       const item = memoList.find(m => m.objectId === editingId);
-      if (item) { item.title = title; item.content = content; if (pendingImgUrl) item.imgUrl = pendingImgUrl; }
+      if (item) { item.title = title; item.content = content; if (pendingImgUrl) item.imgUrl = pendingImgUrl; if (selectedTag) item.tag = selectedTag; }
       showToast("修改成功 ✿");
       exitEditMode();
       renderList();
     } else {
-      // 新增模式：拿到返回的对象，直接插入本地列表
-      const newMemo = await createMemo(title, content, pendingImgUrl);
+      const newMemo = await createMemo(title, content, pendingImgUrl, selectedTag);
       memoList.unshift(newMemo);
       renderList();
     }
@@ -948,12 +968,17 @@ async function submitMemo() {
   }
 }
 
-// 切换完成状态 —— 本地直接更新，不重新请求
-async function toggleFinish(id, finish) {
+// 切换完成状态
+async function toggleFinish(id, finish, checkEl) {
   try {
     await updateMemo(id, { isFinish: finish });
     const item = memoList.find(m => m.objectId === id);
     if (item) item.isFinish = finish;
+    // 撒花动效：在勾选框位置触发
+    if (finish && checkEl) {
+      const rect = checkEl.getBoundingClientRect();
+      confetti(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    }
     renderList();
   } catch (e) {
     showToast("操作失败：" + e.message);
@@ -970,6 +995,11 @@ function startEdit(id) {
   $("submitBtn").textContent = "💾 保存修改";
   $("editBar").classList.add("show");
   pendingImgUrl = m.imgUrl || null;
+  selectedTag = m.tag || null;
+  // 更新标签选中状态
+  document.querySelectorAll("#tagPicker .tag-pick").forEach(b => {
+    b.classList.toggle("active", b.getAttribute("data-tag") === selectedTag);
+  });
   if (m.imgUrl) {
     $("imgPreview").src = m.imgUrl;
     $("imgPreview").style.display = "block";
@@ -995,9 +1025,11 @@ function resetForm() {
   $("imgPreview").src = "";
   $("fileInput").value = "";
   pendingImgUrl = null;
+  selectedTag = null;
+  document.querySelectorAll("#tagPicker .tag-pick").forEach(b => b.classList.remove("active"));
 }
 
-// 删除 —— 本地直接移除，不重新请求
+// 删除
 async function delMemo(id) {
   if (!confirm("确定删除这条备忘吗？")) return;
   try {
@@ -1005,25 +1037,55 @@ async function delMemo(id) {
     memoList = memoList.filter(m => m.objectId !== id);
     renderList();
     showToast("已删除");
-    cloudSay("删掉了，轻松一点～");
   } catch (e) {
     showToast("删除失败：" + e.message);
   }
 }
 
+// 一键导出到剪贴板
+function exportMemos() {
+  if (memoList.length === 0) { showToast("没有可导出的备忘"); return; }
+  const text = memoList.map((m, i) => {
+    const status = m.isFinish ? "✅" : "⏳";
+    const tag = m.tag ? `[${m.tag}]` : "";
+    const content = m.content ? `\n  ${m.content}` : "";
+    return `${i + 1}. ${status} ${tag} ${m.title}${content}`;
+  }).join("\n\n");
+
+  navigator.clipboard.writeText(text).then(() => {
+    showToast("已复制到剪贴板，去粘贴吧 ✿");
+  }).catch(() => {
+    // 降级方案：用 textarea 选中复制
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand("copy"); showToast("已复制到剪贴板 ✿"); }
+    catch (e) { showToast("复制失败，请手动复制"); }
+    ta.remove();
+  });
+}
+
+// 庆祝弹窗
+function showCelebrate(msg) {
+  $("celebrateMsg").innerHTML = msg;
+  $("celebrate").classList.add("show");
+}
+function closeCelebrate() {
+  $("celebrate").classList.remove("show");
+}
+
 /* -------------------------------------------------------
-   3.11 图片上传处理
+   3.13 图片上传处理
    ------------------------------------------------------- */
 
 $("fileInput").addEventListener("change", async (e) => {
   const file = e.target.files[0];
   if (!file) return;
-  if (file.size > 5 * 1024 * 1024) {
-    showToast("图片不能超过 5MB");
-    return;
-  }
+  if (file.size > 5 * 1024 * 1024) { showToast("图片不能超过 5MB"); return; }
 
-  // 本地预览
   const reader = new FileReader();
   reader.onload = (ev) => {
     $("imgPreview").src = ev.target.result;
@@ -1031,7 +1093,6 @@ $("fileInput").addEventListener("change", async (e) => {
   };
   reader.readAsDataURL(file);
 
-  // 上传到 Bmob 文件存储
   showLoading(true);
   try {
     const url = await uploadImgToBmob(file);
@@ -1046,7 +1107,7 @@ $("fileInput").addEventListener("change", async (e) => {
 });
 
 /* -------------------------------------------------------
-   3.12 事件监听 & 键盘快捷键
+   3.14 事件监听 & 键盘快捷键
    ------------------------------------------------------- */
 
 $("titleInput").addEventListener("keydown", (e) => {
@@ -1062,16 +1123,17 @@ $("loginPass").addEventListener("keydown", (e) => {
 });
 
 /* -------------------------------------------------------
-   3.13 页面初始化
+   3.15 页面初始化
    ------------------------------------------------------- */
 
 (function init() {
-  initTheme();           // 加载主题配色
-  restoreSession();      // 恢复登录状态
+  initTheme();
+  restoreSession();
 
   if (currentUser && sessionToken) {
-    // 已登录
     $("userBar").style.display = "block";
+    $("statsBoard").style.display = "flex";
+    $("toolbar").style.display = "flex";
     $("userName").textContent = currentUser;
     showLoading(true);
     fetchMemos()
@@ -1082,7 +1144,7 @@ $("loginPass").addEventListener("keydown", (e) => {
             加载失败：${escapeHtml(e.message)}
             <div style="margin-top:14px;font-size:13px;color:var(--text-l);line-height:1.8;text-align:left;padding:0 10px;">
               <b>💡 排查步骤：</b><br/>
-              1. 确认 Bmob 后台 Memo 表字段：title / content / isFinish / imgUrl / username<br/>
+              1. 确认 Bmob 后台 Memo 表字段：title/content/isFinish/imgUrl/username/tag<br/>
               2. 按 F12 查看控制台错误<br/>
               3. 确认网络能访问 api.bmobcloud.com
             </div>
@@ -1090,14 +1152,8 @@ $("loginPass").addEventListener("keydown", (e) => {
       })
       .finally(() => showLoading(false));
   } else {
-    // 未登录
     $("loginOverlay").classList.add("show");
   }
-
-  // 开场小云问候
-  setTimeout(() => {
-    cloudSay("嗨，我是小云，帮你记事的～");
-  }, 1000);
 })();
 
 </script>
