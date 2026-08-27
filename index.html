@@ -3,13 +3,14 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>新媒体选题备忘录 · 灵感收集器</title>
+<title>奶龙懒人备忘录 · 躺平也能记事</title>
 
 <!--
 ================================================================================
-  新媒体选题备忘录 v2.0（单文件版）
+  奶龙懒人备忘录 v3.0（单文件版）
   技术栈：原生 HTML + CSS + JavaScript（零框架、零外部依赖）
-  后端：Bmob 后端云 REST API（数据库 + 文件存储，不使用 localStorage）
+  后端：Bmob 后端云 REST API（数据库 + 文件存储）
+  定位：面向普通学生、上班族的日常待办/琐事记录工具
 
   ★★★ 手动配置区 ★★★
   请把下面 APPLICATION_ID 和 REST_API_KEY 换成你自己的 Bmob 密钥：
@@ -20,12 +21,17 @@
   ★★★ Bmob 后台数据表配置 ★★★
   表名：Memo
   字段：
-    title     String    选题标题
-    content   String    脚本/灵感内容
-    isFinish  Boolean   是否已发布/完成
-    imgUrl    String    封面图片URL（Bmob文件存储返回的链接）
+    title     String    备忘标题
+    content   String    备忘内容/备注
+    isFinish  Boolean   是否已完成
+    imgUrl    String    图片URL（Bmob文件存储返回的链接）
     username  String    创建者用户名（用于用户数据隔离）
   注意：imgUrl 和 username 字段需在 Bmob 后台手动新增，客户端不可见不要勾选。
+
+  ★★★ Bmob 能力使用说明 ★★★
+  - 数据库：Memo 表存储备忘录数据（增删改查）
+  - 文件存储：上传图片到 Bmob 文件服务，返回 URL 存入 imgUrl 字段
+  - 用户系统：注册/登录/会话令牌，实现用户数据隔离
 
   ★★★ 部署说明 ★★★
   - 本地调试：双击 start-server.bat，通过 http://localhost:8001 访问
@@ -35,211 +41,299 @@
 
 <style>
 /* ==========================================================================
-   一、CSS 样式区：奶油黄治愈风格（保持不变）
+   一、CSS 样式区
    ========================================================================== */
 
-* {
-  margin: 0; padding: 0; box-sizing: border-box;
-  -webkit-tap-highlight-color: transparent;
+/* ---- 1. 主题配色变量（3套皮肤，用 data-theme 切换） ---- */
+:root,
+[data-theme="cream"] {
+  --bg:        #FFF3D9;
+  --card:      #FFFDF6;
+  --primary:   #f0b429;
+  --primary-l: #ffd97a;
+  --accent:    #FFD6E0;
+  --text:      #6b5b3e;
+  --text-l:    #b0967a;
+  --border:    rgba(180,150,90,0.18);
+  --shadow:    rgba(180,150,90,0.18);
+  --done-bg:   #E8E0D0;
+  --btn-del:   #FFE0E0;
+  --btn-del-t: #c0506a;
+  --theme-name: "奶油黄";
+}
+[data-theme="pink"] {
+  --bg:        #FFE4F0;
+  --card:      #FFF5FA;
+  --primary:   #ff7eb5;
+  --primary-l: #ffb3d1;
+  --accent:    #E0C9FF;
+  --text:      #6b3e5b;
+  --text-l:    #b07a96;
+  --border:    rgba(180,90,130,0.15);
+  --shadow:    rgba(180,90,130,0.18);
+  --done-bg:   #F0DDE8;
+  --btn-del:   #FFD0E0;
+  --btn-del-t: #c0506a;
+  --theme-name: "浅粉";
+}
+[data-theme="mint"] {
+  --bg:        #D9F5E9;
+  --card:      #F0FFF8;
+  --primary:   #34c08a;
+  --primary-l: #7eddb8;
+  --accent:    #C2E8FF;
+  --text:      #3e6b5b;
+  --text-l:    #7ab09a;
+  --border:    rgba(60,120,90,0.15);
+  --shadow:    rgba(60,120,90,0.15);
+  --done-bg:   #D5EDE0;
+  --btn-del:   #FFE0E0;
+  --btn-del-t: #c0506a;
+  --theme-name: "薄荷绿";
 }
 
-html, body { min-height: 100%; }
-
+/* ---- 2. 基础重置 ---- */
+* { margin: 0; padding: 0; box-sizing: border-box; }
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
-               "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
-  background: linear-gradient(160deg, #FFF8E7 0%, #FFF3D9 50%, #FFEBC2 100%);
-  background-attachment: fixed;
-  color: #6b5b3e;
-  padding: 18px 14px 60px;
-  line-height: 1.6;
-  -webkit-font-smoothing: antialiased;
+  font-family: -apple-system, "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  padding: 16px 12px 40px;
+  transition: background 0.4s ease, color 0.4s ease;
 }
-
 .container {
-  max-width: 720px;
-  margin: 0 auto;
-  background: #FFFDF6;
-  border-radius: 28px;
-  padding: 26px 22px 30px;
-  box-shadow: 0 10px 30px rgba(180, 150, 90, 0.18), 0 2px 8px rgba(180, 150, 90, 0.08);
+  max-width: 620px; margin: 0 auto;
+  background: var(--card);
+  border-radius: 28px; padding: 24px 20px 28px;
+  box-shadow: 0 6px 24px var(--shadow);
+  transition: background 0.4s ease, box-shadow 0.4s ease;
 }
 
-/* 标题区 */
-.header { text-align: center; margin-bottom: 22px; }
-.header h1 { font-size: 26px; font-weight: 700; color: #b8860b; letter-spacing: 1px; }
-.header .subtitle { font-size: 13px; color: #b0967a; margin-top: 6px; }
+/* ---- 3. 顶栏（用户信息 + 主题切换） ---- */
+.top-bar {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 6px; font-size: 13px;
+}
+.user-info { color: var(--text-l); }
+.user-info b { color: var(--text); }
+.btn-logout {
+  border: none; cursor: pointer; font-family: inherit;
+  font-size: 12px; border-radius: 8px; padding: 4px 10px;
+  background: var(--btn-del); color: var(--btn-del-t); margin-left: 6px;
+}
+.theme-switch { display: flex; gap: 6px; }
+.theme-dot {
+  width: 20px; height: 20px; border-radius: 50%;
+  border: 2px solid transparent; cursor: pointer; transition: transform 0.2s;
+}
+.theme-dot:hover { transform: scale(1.2); }
+.theme-dot[data-t="cream"] { background: #FFF3D9; border-color: #f0b429; }
+.theme-dot[data-t="pink"]  { background: #FFE4F0; border-color: #ff7eb5; }
+.theme-dot[data-t="mint"]  { background: #D9F5E9; border-color: #34c08a; }
+.theme-dot.active { border-width: 3px; }
 
-/* 输入表单卡片 */
+/* ---- 4. 标题区 + 奶龙图标 ---- */
+.header { text-align: center; margin-bottom: 20px; position: relative; }
+.header h1 {
+  font-size: 24px; color: var(--text);
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.header .subtitle { font-size: 13px; color: var(--text-l); margin-top: 4px; }
+.dragon-icon {
+  font-size: 28px; cursor: pointer; display: inline-block;
+  transition: transform 0.3s; user-select: none;
+}
+.dragon-icon:hover { transform: rotate(-8deg) scale(1.1); }
+.dragon-icon:active { transform: scale(0.9); }
+
+/* 奶龙气泡 */
+.dragon-bubble {
+  position: fixed; top: 15%; left: 50%; transform: translateX(-50%) scale(0);
+  background: var(--card); border-radius: 18px; padding: 14px 20px;
+  font-size: 14px; color: var(--text); line-height: 1.6;
+  box-shadow: 0 8px 28px var(--shadow); z-index: 200;
+  max-width: 320px; text-align: center; pointer-events: none;
+  transition: transform 0.35s ease, opacity 0.3s ease; opacity: 0;
+}
+.dragon-bubble.show { transform: translateX(-50%) scale(1); opacity: 1; }
+
+/* ---- 5. 输入表单 ---- */
 .form-card {
-  background: #FFF6E0;
-  border-radius: 20px;
-  padding: 18px 16px;
-  margin-bottom: 22px;
-  box-shadow: inset 0 1px 3px rgba(180, 150, 90, 0.10);
+  background: var(--bg); border-radius: 20px; padding: 16px 14px;
+  margin-bottom: 18px; box-shadow: inset 0 0 0 1.5px var(--border);
 }
 .form-card input[type="text"],
 .form-card textarea {
   width: 100%; border: none; outline: none;
-  background: #FFFDF6; border-radius: 14px;
-  padding: 12px 14px; font-size: 15px; color: #6b5b3e;
-  font-family: inherit; resize: vertical;
-  box-shadow: inset 0 0 0 1.5px rgba(180, 150, 90, 0.18);
-  transition: box-shadow 0.2s ease;
+  background: var(--card); border-radius: 14px;
+  padding: 11px 14px; font-size: 15px; color: var(--text);
+  font-family: inherit; box-shadow: inset 0 0 0 1.5px var(--border);
+  transition: box-shadow 0.2s ease; margin-bottom: 10px;
 }
-.form-card input[type="text"] { margin-bottom: 12px; }
-.form-card input[type="text"]:focus,
-.form-card textarea:focus {
-  box-shadow: inset 0 0 0 2px #f0c04a;
-}
-.form-card textarea { min-height: 80px; }
+.form-card input:focus,
+.form-card textarea:focus { box-shadow: inset 0 0 0 2px var(--primary); }
+.form-card textarea { resize: none; min-height: 56px; }
 
-/* AI 输入区 */
-.ai-section {
-  background: #FFF9EC;
-  border-radius: 14px;
-  padding: 12px;
-  margin-bottom: 12px;
-  border: 1.5px dashed #f0c04a;
-}
-.ai-section .ai-label {
-  font-size: 13px; font-weight: 600; color: #9a7b1f; margin-bottom: 8px;
-}
-.ai-section input[type="text"] {
-  width: 100%; border: none; outline: none;
-  background: #FFFDF6; border-radius: 10px;
-  padding: 10px 12px; font-size: 14px; color: #6b5b3e;
-  box-shadow: inset 0 0 0 1.5px rgba(180, 150, 90, 0.15);
-  margin-bottom: 8px;
-}
-.btn-ai {
-  width: 100%; border: none; cursor: pointer;
-  font-family: inherit; font-size: 14px; font-weight: 600;
-  border-radius: 10px; padding: 10px;
-  background: linear-gradient(135deg, #d4a8f0, #b07ee0);
-  color: #fff;
-  box-shadow: 0 4px 10px rgba(176, 126, 224, 0.30);
-  transition: transform 0.15s ease, box-shadow 0.2s ease;
-}
-.btn-ai:active { transform: scale(0.96); }
-.btn-ai:hover { box-shadow: 0 6px 14px rgba(176, 126, 224, 0.40); }
-
-/* 图片上传区 */
-.img-upload-area {
-  display: flex; align-items: center; gap: 12px;
-  margin-bottom: 12px; flex-wrap: wrap;
-}
-.img-upload-btn {
-  position: relative; display: inline-flex; align-items: center;
-  justify-content: center; gap: 6px;
-  background: #FFF1C2; border: 2px dashed #f0c04a;
-  border-radius: 14px; padding: 10px 16px;
-  font-size: 14px; color: #9a7b1f; cursor: pointer;
-  transition: all 0.2s ease;
-}
-.img-upload-btn:hover { background: #FFE9A8; }
-.img-upload-btn input[type="file"] {
-  position: absolute; inset: 0; opacity: 0; cursor: pointer;
-}
+/* 图片上传 */
+.img-upload-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
 .img-preview {
-  width: 70px; height: 70px; border-radius: 12px;
-  object-fit: cover; border: 1.5px solid #f0c04a;
+  width: 54px; height: 54px; border-radius: 14px; object-fit: cover;
+  border: 1.5px solid var(--border); display: none;
 }
-.img-preview-wrap { position: relative; }
-.img-preview-del {
-  position: absolute; top: -6px; right: -6px;
-  width: 20px; height: 20px; border-radius: 50%;
-  background: #c0506a; color: #fff; border: none;
-  font-size: 12px; cursor: pointer; display: flex;
-  align-items: center; justify-content: center;
+.btn-upload {
+  border: none; cursor: pointer; font-family: inherit;
+  font-size: 13px; border-radius: 12px; padding: 8px 14px;
+  background: var(--accent); color: var(--text);
+  transition: opacity 0.2s;
 }
+.btn-upload:hover { opacity: 0.85; }
+#fileInput { display: none; }
 
-/* 按钮样式 */
+/* 按钮 */
 .btn {
-  border: none; outline: none; cursor: pointer;
-  font-family: inherit; font-size: 15px; font-weight: 600;
-  border-radius: 14px; padding: 11px 18px;
-  transition: transform 0.15s ease, box-shadow 0.2s ease, background 0.2s ease;
+  border: none; cursor: pointer; font-family: inherit;
+  font-size: 15px; font-weight: 600; border-radius: 14px;
+  padding: 12px 20px; transition: all 0.2s ease;
 }
-.btn:active { transform: scale(0.96); }
 .btn-primary {
-  background: linear-gradient(135deg, #ffd97a, #f0b429);
-  color: #6b4a12;
-  box-shadow: 0 6px 14px rgba(240, 180, 41, 0.35);
-  width: 100%; margin-top: 12px; padding: 13px; font-size: 16px;
+  background: linear-gradient(135deg, var(--primary-l), var(--primary));
+  color: #fff; width: 100%; box-shadow: 0 4px 12px var(--shadow);
 }
-.btn-primary:hover { box-shadow: 0 8px 18px rgba(240, 180, 41, 0.45); }
-.btn-mini { font-size: 13px; padding: 7px 12px; border-radius: 10px; }
-.btn-edit { background: #FFF1C2; color: #9a7b1f; }
-.btn-del  { background: #FFE0E0; color: #c0506a; }
-.btn-edit:hover { background: #FFE9A8; }
-.btn-del:hover  { background: #FFCECE; }
+.btn-primary:hover { transform: translateY(-1px); box-shadow: 0 6px 16px var(--shadow); }
+.btn-primary:active { transform: translateY(0); }
+.btn-ai {
+  background: var(--accent); color: var(--text);
+  font-size: 14px; padding: 10px 16px; border-radius: 12px;
+  margin-bottom: 10px; width: 100%;
+}
+
+/* 编辑模式 */
+.edit-bar { display: none; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.edit-bar.show { display: flex; }
+.edit-bar span { font-size: 13px; color: var(--primary); font-weight: 600; }
 .btn-cancel {
-  background: #EFEFEF; color: #888;
-  width: 100%; margin-top: 8px; padding: 10px; font-size: 14px;
+  border: none; cursor: pointer; font-family: inherit;
+  font-size: 13px; border-radius: 10px; padding: 6px 12px;
+  background: var(--btn-del); color: var(--btn-del-t);
 }
 
-/* 笔记列表 */
-.list { display: flex; flex-direction: column; gap: 14px; }
+/* ---- 6. 列表 ---- */
+.memo-list { display: flex; flex-direction: column; gap: 12px; }
 .memo-item {
-  background: #FFFDF6; border-radius: 18px; padding: 14px 16px;
-  box-shadow: 0 4px 12px rgba(180, 150, 90, 0.12);
-  transition: transform 0.15s ease, box-shadow 0.2s ease;
-  border: 1.5px solid rgba(240, 192, 74, 0.18);
+  background: var(--bg); border-radius: 18px; padding: 14px 16px;
+  box-shadow: inset 0 0 0 1.5px var(--border); transition: opacity 0.25s;
 }
-.memo-item:hover { transform: translateY(-2px); box-shadow: 0 8px 18px rgba(180, 150, 90, 0.18); }
-.memo-item.done { background: #FBF3E0; opacity: 0.85; }
-.memo-item.done .memo-title, .memo-item.done .memo-content { text-decoration: line-through; color: #b0967a; }
+.memo-item.done { opacity: 0.6; background: var(--done-bg); }
+.memo-item.done .memo-title { text-decoration: line-through; }
 
-.memo-head { display: flex; align-items: center; gap: 10px; }
+.memo-row { display: flex; align-items: flex-start; gap: 10px; }
 .memo-check {
-  flex: 0 0 auto; width: 24px; height: 24px; border-radius: 50%;
-  border: 2px solid #f0c04a; background: #FFFDF6; cursor: pointer;
+  width: 24px; height: 24px; border: 2px solid var(--primary);
+  border-radius: 8px; cursor: pointer; flex-shrink: 0; margin-top: 1px;
   display: flex; align-items: center; justify-content: center;
-  font-size: 14px; color: #fff; transition: all 0.2s ease;
+  font-size: 14px; color: #fff; transition: all 0.2s; background: transparent;
 }
-.memo-check.checked { background: #6cc24a; border-color: #6cc24a; }
-.memo-check.checked::after { content: "✓"; font-weight: bold; }
-.memo-title { flex: 1; font-size: 16px; font-weight: 700; color: #8a6a2a; word-break: break-all; }
-.memo-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.memo-check.checked { background: var(--primary); border-color: var(--primary); }
+.memo-content { flex: 1; min-width: 0; }
+.memo-title { font-size: 16px; font-weight: 600; color: var(--text); word-break: break-word; }
+.memo-desc { font-size: 13px; color: var(--text-l); margin-top: 3px; word-break: break-word; white-space: pre-wrap; }
+.memo-img { width: 100%; max-height: 160px; object-fit: cover; border-radius: 12px; margin-top: 8px; }
 
-.memo-content { margin-top: 8px; font-size: 14px; color: #7a6647; white-space: pre-wrap; word-break: break-all; }
-.memo-img { width: 100%; max-width: 200px; height: auto; border-radius: 12px; margin-top: 10px; border: 1.5px solid rgba(240,192,74,0.20); }
-.memo-time { margin-top: 8px; font-size: 11px; color: #c2a978; }
+.memo-actions { display: flex; gap: 8px; margin-top: 8px; }
+.btn-mini {
+  border: none; cursor: pointer; font-family: inherit;
+  font-size: 12px; border-radius: 8px; padding: 5px 12px;
+  transition: opacity 0.2s;
+}
+.btn-edit { background: var(--accent); color: var(--text); }
+.btn-del  { background: var(--btn-del); color: var(--btn-del-t); }
+.btn-mini:hover { opacity: 0.8; }
 
-.empty { text-align: center; padding: 40px 10px; color: #c2a978; font-size: 14px; }
+/* 空状态 */
+.empty { text-align: center; padding: 36px 16px; color: var(--text-l); }
 .empty .emoji { font-size: 40px; display: block; margin-bottom: 8px; }
 
-/* 提示浮层 */
-.toast {
-  position: fixed; left: 50%; bottom: 30px;
-  transform: translateX(-50%) translateY(20px);
-  background: rgba(107, 91, 62, 0.92); color: #fff;
-  padding: 10px 18px; border-radius: 20px; font-size: 13px;
-  opacity: 0; pointer-events: none; transition: all 0.3s ease;
-  z-index: 999; white-space: nowrap;
-}
-.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
-
-/* 加载遮罩 */
+/* ---- 7. 覆盖层 ---- */
 .loading-mask {
-  display: none; position: fixed; inset: 0;
-  background: rgba(255, 243, 217, 0.6); z-index: 998;
-  align-items: center; justify-content: center;
+  position: fixed; inset: 0; background: rgba(255,255,255,0.7);
+  z-index: 500; display: none; align-items: center; justify-content: center;
 }
 .loading-mask.show { display: flex; }
-.loading-mask .spinner {
-  width: 38px; height: 38px; border: 4px solid #f0c04a;
-  border-top-color: transparent; border-radius: 50%;
+.spinner {
+  width: 36px; height: 36px; border: 3.5px solid var(--accent);
+  border-top-color: var(--primary); border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* 响应式 */
-@media (max-width: 480px) {
-  body { padding: 10px 8px 40px; }
-  .container { padding: 20px 14px 24px; border-radius: 22px; }
-  .header h1 { font-size: 22px; }
+.toast {
+  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(60px);
+  background: rgba(60,50,30,0.92); color: #fff; border-radius: 12px;
+  padding: 10px 18px; font-size: 14px; z-index: 600; opacity: 0;
+  transition: all 0.3s ease; pointer-events: none; max-width: 88%;
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* 庆祝弹窗 */
+.celebrate {
+  position: fixed; inset: 0; z-index: 700; display: none;
+  align-items: center; justify-content: center;
+  background: rgba(255,243,217,0.6); backdrop-filter: blur(4px);
+}
+.celebrate.show { display: flex; }
+.celebrate-box {
+  background: var(--card); border-radius: 28px; padding: 32px 28px;
+  text-align: center; max-width: 340px; width: 88%;
+  box-shadow: 0 16px 48px var(--shadow);
+  animation: pop 0.5s ease;
+}
+@keyframes pop {
+  0%   { transform: scale(0.5); opacity: 0; }
+  70%  { transform: scale(1.08); opacity: 1; }
+  100% { transform: scale(1); }
+}
+.celebrate-box .dragon { font-size: 56px; display: block; margin-bottom: 10px; }
+.celebrate-box h2 { font-size: 20px; color: var(--text); margin-bottom: 6px; }
+.celebrate-box p { font-size: 14px; color: var(--text-l); line-height: 1.6; margin-bottom: 16px; }
+
+/* 登录弹窗 */
+.login-overlay {
+  display: none; position: fixed; inset: 0;
+  background: rgba(107,91,62,0.35); z-index: 550;
+  align-items: center; justify-content: center;
+}
+.login-overlay.show { display: flex; }
+.login-box {
+  background: var(--card); border-radius: 24px; padding: 28px 24px;
+  width: 90%; max-width: 360px;
+  box-shadow: 0 14px 40px var(--shadow);
+}
+.login-box h2 { text-align: center; font-size: 20px; color: var(--text); margin-bottom: 6px; }
+.login-box .login-sub { text-align: center; font-size: 13px; color: var(--text-l); margin-bottom: 20px; }
+.login-box input[type="text"],
+.login-box input[type="password"] {
+  width: 100%; border: none; outline: none;
+  background: var(--bg); border-radius: 14px;
+  padding: 12px 14px; font-size: 15px; color: var(--text);
+  font-family: inherit; margin-bottom: 12px;
+  box-shadow: inset 0 0 0 1.5px var(--border); transition: box-shadow 0.2s;
+}
+.login-box input:focus { box-shadow: inset 0 0 0 2px var(--primary); }
+.login-tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+.login-tab {
+  flex: 1; border: none; cursor: pointer; font-family: inherit;
+  font-size: 14px; font-weight: 600; border-radius: 10px;
+  padding: 9px; transition: all 0.2s;
+}
+.login-tab.active { background: linear-gradient(135deg, var(--primary-l), var(--primary)); color: #fff; }
+.login-tab:not(.active) { background: var(--bg); color: var(--text-l); }
+
+/* ---- 8. 响应式 ---- */
+@media (max-width: 600px) {
+  body { padding: 10px 8px 30px; }
+  .container { padding: 18px 14px 22px; border-radius: 22px; }
+  .header h1 { font-size: 20px; }
   .memo-title { font-size: 15px; }
   .btn-mini { padding: 6px 9px; font-size: 12px; }
 }
@@ -247,56 +341,6 @@ body {
   body { padding: 30px 16px 60px; }
   .container { padding: 34px 38px 38px; }
 }
-
-/* 17. 用户信息栏 */
-.user-bar {
-  display: flex; align-items: center; justify-content: flex-end;
-  gap: 10px; margin-bottom: 10px; font-size: 13px; color: #b0967a;
-}
-.user-bar .user-name { font-weight: 600; color: #8a6a2a; }
-.btn-logout {
-  border: none; cursor: pointer; font-family: inherit;
-  font-size: 12px; border-radius: 8px; padding: 5px 12px;
-  background: #FFE0E0; color: #c0506a; transition: background 0.2s;
-}
-.btn-logout:hover { background: #FFCECE; }
-
-/* 18. 登录弹窗 */
-.login-overlay {
-  display: none; position: fixed; inset: 0;
-  background: rgba(107, 91, 62, 0.35); z-index: 997;
-  align-items: center; justify-content: center;
-}
-.login-overlay.show { display: flex; }
-.login-box {
-  background: #FFFDF6; border-radius: 24px; padding: 28px 24px;
-  width: 90%; max-width: 360px;
-  box-shadow: 0 14px 40px rgba(180, 150, 90, 0.30);
-}
-.login-box h2 { text-align: center; font-size: 20px; color: #b8860b; margin-bottom: 6px; }
-.login-box .login-sub { text-align: center; font-size: 13px; color: #b0967a; margin-bottom: 20px; }
-.login-box input[type="text"],
-.login-box input[type="password"] {
-  width: 100%; border: none; outline: none;
-  background: #FFF6E0; border-radius: 14px;
-  padding: 12px 14px; font-size: 15px; color: #6b5b3e;
-  font-family: inherit; margin-bottom: 12px;
-  box-shadow: inset 0 0 0 1.5px rgba(180, 150, 90, 0.18);
-  transition: box-shadow 0.2s ease;
-}
-.login-box input:focus { box-shadow: inset 0 0 0 2px #f0c04a; }
-.login-tabs {
-  display: flex; gap: 8px; margin-bottom: 16px;
-}
-.login-tab {
-  flex: 1; border: none; cursor: pointer; font-family: inherit;
-  font-size: 14px; font-weight: 600; border-radius: 10px;
-  padding: 9px; transition: all 0.2s;
-}
-.login-tab.active {
-  background: linear-gradient(135deg, #ffd97a, #f0b429); color: #6b4a12;
-}
-.login-tab:not(.active) { background: #FFF1C2; color: #9a7b1f; }
 </style>
 </head>
 
@@ -307,79 +351,89 @@ body {
      ===================================================================== -->
 <div class="container">
 
-  <!-- 用户信息栏（登录后显示） -->
-  <div class="user-bar" id="userBar" style="display:none;">
-    <span>👋 </span>
-    <span class="user-name" id="userName"></span>
-    <button class="btn-logout" onclick="logout()">退出</button>
+  <!-- 顶栏：用户信息 + 主题切换 -->
+  <div class="top-bar">
+    <div class="user-info" id="userBar" style="display:none;">
+      👋 <b id="userName"></b>
+      <button class="btn-logout" onclick="logout()">退出</button>
+    </div>
+    <div class="theme-switch">
+      <div class="theme-dot active" data-t="cream" onclick="setTheme('cream')" title="奶油黄"></div>
+      <div class="theme-dot" data-t="pink"  onclick="setTheme('pink')"  title="浅粉"></div>
+      <div class="theme-dot" data-t="mint"  onclick="setTheme('mint')"  title="薄荷绿"></div>
+    </div>
   </div>
 
-  <!-- 顶部标题 -->
+  <!-- 标题区 + 奶龙图标 -->
   <div class="header">
-    <h1>新媒体选题备忘录</h1>
-    <div class="subtitle">收集你的短视频灵感，让创意不溜走 ✿</div>
+    <h1>
+      <span class="dragon-icon" onclick="dragonTalk()">🐉</span>
+      奶龙懒人备忘录
+    </h1>
+    <div class="subtitle">躺平也要记事，琐事不遗漏 ✿</div>
   </div>
 
-  <!-- 输入表单卡片 -->
+  <!-- 输入表单 -->
   <div class="form-card">
-
-    <!-- AI 生成区：输入想法，AI 自动生成选题和脚本 -->
-    <div class="ai-section">
-      <div class="ai-label">🤖 AI 选题生成器</div>
-      <input type="text" id="aiInput" maxlength="100"
-             placeholder="输入简短想法，如「打工人日常」「宠物搞笑」" />
-      <button class="btn-ai" id="aiBtn" onclick="generateAITopic()">✨ AI生成新媒体选题</button>
+    <!-- 编辑提示 -->
+    <div class="edit-bar" id="editBar">
+      <span>📝 正在编辑...</span>
+      <button class="btn-cancel" onclick="exitEditMode()">取消</button>
     </div>
 
-    <!-- 选题标题输入框 -->
-    <input type="text" id="titleInput" maxlength="50"
-           placeholder="选题标题（如：5个让打工人破防的瞬间）" />
+    <!-- AI 生成备忘 -->
+    <button class="btn-ai" onclick="generateAIMemo()">✨ AI 帮我生成备忘内容</button>
+    <input type="text" id="aiInput" placeholder="输入想法（如：明天要做的事）让AI帮你生成" style="margin-bottom:10px;" />
 
-    <!-- 脚本/灵感内容输入框 -->
-    <textarea id="contentInput" maxlength="2000"
-              placeholder="脚本/灵感描述（选填，可换行）"></textarea>
+    <!-- 标题/内容输入 -->
+    <input type="text" id="titleInput" maxlength="50" placeholder="备忘标题（如：拿快递）" />
+    <textarea id="contentInput" maxlength="500" placeholder="备注内容（选填，可换行）"></textarea>
 
-    <!-- 图片上传区 -->
-    <div class="img-upload-area" id="imgUploadArea">
-      <label class="img-upload-btn">
-        📷 上传封面图
-        <input type="file" id="imgInput" accept="image/*" onchange="onImgSelected(event)" />
-      </label>
-      <div id="imgPreviewWrap" style="display:none;" class="img-preview-wrap">
-        <img class="img-preview" id="imgPreview" />
-        <button class="img-preview-del" onclick="clearImg()">✕</button>
-      </div>
+    <!-- 图片上传 -->
+    <div class="img-upload-row">
+      <img class="img-preview" id="imgPreview" alt="预览" />
+      <button class="btn-upload" onclick="$('fileInput').click()">📷 上传图片</button>
+      <input type="file" id="fileInput" accept="image/*" />
     </div>
 
-    <!-- 主按钮：新增 / 保存 -->
-    <button class="btn btn-primary" id="submitBtn">＋ 添加选题</button>
-    <button class="btn btn-cancel" id="cancelBtn" style="display:none;">取消编辑</button>
+    <!-- 提交按钮 -->
+    <button class="btn btn-primary" id="submitBtn" onclick="submitMemo()">＋ 添加备忘</button>
   </div>
 
-  <!-- 选题列表 -->
-  <div class="list" id="memoList"></div>
+  <!-- 备忘列表 -->
+  <div class="memo-list" id="memoList"></div>
 
 </div>
+
+<!-- 奶龙气泡 -->
+<div class="dragon-bubble" id="dragonBubble"></div>
 
 <!-- 加载遮罩 -->
 <div class="loading-mask" id="loadingMask"><div class="spinner"></div></div>
 <!-- 轻提示 -->
 <div class="toast" id="toast"></div>
 
-<!-- 登录/注册弹窗（未登录时显示） -->
+<!-- 庆祝弹窗 -->
+<div class="celebrate" id="celebrate">
+  <div class="celebrate-box">
+    <span class="dragon">🐉</span>
+    <h2>全部搞定啦！</h2>
+    <p id="celebrateMsg">太厉害了，所有备忘都完成了～<br/>奶龙说你是效率小能手！</p>
+    <button class="btn btn-primary" onclick="closeCelebrate()">好耶！</button>
+  </div>
+</div>
+
+<!-- 登录弹窗 -->
 <div class="login-overlay" id="loginOverlay">
   <div class="login-box">
-    <h2>新媒体选题备忘录</h2>
-    <div class="login-sub">登录后即可管理你的选题灵感</div>
-    <!-- 切换登录/注册 -->
+    <h2>🐉 奶龙懒人备忘录</h2>
+    <div class="login-sub">登录后即可管理你的待办</div>
     <div class="login-tabs">
       <button class="login-tab active" id="tabLogin" onclick="switchTab('login')">登录</button>
       <button class="login-tab" id="tabReg" onclick="switchTab('register')">注册</button>
     </div>
-    <!-- 账号密码输入 -->
     <input type="text" id="loginUser" maxlength="20" placeholder="用户名（3-20位）" />
     <input type="password" id="loginPass" maxlength="32" placeholder="密码（6-32位）" />
-    <!-- 提交按钮 -->
     <button class="btn btn-primary" id="loginBtn" onclick="doLogin()">登录</button>
   </div>
 </div>
@@ -387,15 +441,22 @@ body {
 <script>
 "use strict";
 
-/* ============================================================================
-   3.1 ★★★ Bmob 配置区 ★★★
-   ======================================================================== */
+/* ==========================================================================
+   三、JavaScript 逻辑区
+   ========================================================================== */
 
+/* -------------------------------------------------------
+   3.1 Bmob 配置区（★★★ 手动填入你的密钥 ★★★）
+   ------------------------------------------------------- */
+
+// ▼▼▼ 请替换为你自己的 Bmob 密钥 ▼▼▼
 const APPLICATION_ID = "6dd518b7fba75a11b75f9863883616a9";
 const REST_API_KEY   = "9099ac88fc936a9ea14cff5e0844ac30";
+// ▲▲▲ 请替换为你自己的 Bmob 密钥 ▲▲▲
+
 const TABLE_NAME     = "Memo";
 
-// Bmob API 域名列表（按优先级排序）
+// Bmob API 域名列表（按优先级排序，自动探测可用域名）
 const BMOB_API_HOSTS = [
   "https://api.bmobcloud.com",
   "https://api.bmobapp.com",
@@ -404,15 +465,15 @@ const BMOB_API_HOSTS = [
 const BMOB_API_PATH = "/1";
 let BMOB_WORKING_HOST = null;
 
-/* ============================================================================
-   3.2 用户认证状态
+/* -------------------------------------------------------
+   3.2 用户认证系统
    ★★★ Bmob 后台 Memo 表需新增 username 字段（String），用于按用户筛选数据
-   ======================================================================== */
+   ------------------------------------------------------- */
 
-let currentUser = null;       // 当前登录用户名
-let sessionToken = null;       // Bmob 会话令牌
+let currentUser = null;
+let sessionToken = null;
 
-// 从 sessionStorage 恢复登录状态（非 localStorage，仅用于会话令牌）
+// 从 sessionStorage 恢复登录状态
 function restoreSession() {
   const saved = sessionStorage.getItem("bmob_session");
   if (saved) {
@@ -438,7 +499,7 @@ function clearSession() {
   sessionStorage.removeItem("bmob_session");
 }
 
-/** 切换登录/注册标签 */
+// 切换登录/注册标签
 function switchTab(mode) {
   const isLogin = (mode === "login");
   $("tabLogin").classList.toggle("active", isLogin);
@@ -447,17 +508,15 @@ function switchTab(mode) {
   $("loginBtn").onclick = isLogin ? doLogin : doRegister;
 }
 
-/** 注册新用户 */
+// 注册新用户
 async function doRegister() {
   const username = $("loginUser").value.trim();
   const password = $("loginPass").value.trim();
-
   if (username.length < 3) { showToast("用户名至少 3 位"); return; }
   if (password.length < 6) { showToast("密码至少 6 位"); return; }
 
   showLoading(true);
   try {
-    // Bmob 注册：POST /1/users
     const data = await bmobRequest("POST", "/users", { username, password });
     if (data.sessionToken) {
       saveSession(username, data.sessionToken);
@@ -471,16 +530,14 @@ async function doRegister() {
   }
 }
 
-/** 登录已有用户 */
+// 登录
 async function doLogin() {
   const username = $("loginUser").value.trim();
   const password = $("loginPass").value.trim();
-
   if (!username || !password) { showToast("请输入用户名和密码"); return; }
 
   showLoading(true);
   try {
-    // Bmob 登录：GET /1/login?username=xx&password=xx
     const data = await bmobRequest("GET",
       "/login?username=" + encodeURIComponent(username) +
       "&password=" + encodeURIComponent(password), null);
@@ -496,15 +553,15 @@ async function doLogin() {
   }
 }
 
-/** 登录成功后：隐藏弹窗，显示用户栏，加载数据 */
+// 登录成功
 function onLoginSuccess() {
   $("loginOverlay").classList.remove("show");
-  $("userBar").style.display = "flex";
+  $("userBar").style.display = "block";
   $("userName").textContent = currentUser;
   fetchMemos();
 }
 
-/** 退出登录 */
+// 退出
 function logout() {
   clearSession();
   $("userBar").style.display = "none";
@@ -515,9 +572,28 @@ function logout() {
   renderList();
 }
 
-/* ============================================================================
-   3.3 工具函数
-   ======================================================================== */
+/* -------------------------------------------------------
+   3.3 主题切换（localStorage 存储偏好，不影响备忘数据）
+   ------------------------------------------------------- */
+
+function setTheme(name) {
+  document.body.setAttribute("data-theme", name);
+  localStorage.setItem("memo_theme", name);
+  // 更新选中状态
+  document.querySelectorAll(".theme-dot").forEach(d => {
+    d.classList.toggle("active", d.getAttribute("data-t") === name);
+  });
+}
+
+// 初始化主题
+function initTheme() {
+  const saved = localStorage.getItem("memo_theme") || "cream";
+  setTheme(saved);
+}
+
+/* -------------------------------------------------------
+   3.4 工具函数
+   ------------------------------------------------------- */
 
 const $ = (id) => document.getElementById(id);
 
@@ -533,32 +609,21 @@ function showLoading(show) {
   $("loadingMask").classList.toggle("show", show);
 }
 
-// HTML 转义：防止用户输入破坏页面结构
 function escapeHtml(str) {
   if (str == null) return "";
-  return String(str)
-    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  return String(str).replace(/[&<>"']/g, c =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
+  );
 }
 
-// 时间格式化
-function formatTime(iso) {
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return "";
-  const pad = (n) => String(n).padStart(2, "0");
-  return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate())
-       + " " + pad(d.getHours()) + ":" + pad(d.getMinutes());
-}
-
-/* ============================================================================
-   3.3 Bmob REST API 请求函数
-   使用原生 fetch，HTTP 头传递密钥，多域名自动降级
-   ======================================================================== */
+/* -------------------------------------------------------
+   3.5 Bmob 请求引擎（多域名降级 + session token）
+   ------------------------------------------------------- */
 
 /**
- * Bmob 数据库操作请求（JSON 格式）
- * @param {string} method - GET/POST/PUT/DELETE
- * @param {string} path   - 路径，如 /classes/Memo
+ * 统一 Bmob REST API 请求函数
+ * @param {string} method - GET / POST / PUT / DELETE
+ * @param {string} path   - API 路径（如 /classes/Memo）
  * @param {object} body   - 请求体（可选）
  */
 async function bmobRequest(method, path, body) {
@@ -568,7 +633,7 @@ async function bmobRequest(method, path, body) {
     "X-Bmob-REST-API-Key": REST_API_KEY,
     "Content-Type": "application/json"
   };
-  // 已登录用户附带会话令牌（Bmob 要求认证请求带 X-Bmob-Session-Token）
+  // 已登录用户附带会话令牌
   if (sessionToken) {
     headers["X-Bmob-Session-Token"] = sessionToken;
   }
@@ -578,51 +643,41 @@ async function bmobRequest(method, path, body) {
   for (let i = 0; i < hosts.length; i++) {
     const host = hosts[i];
     const url = host + fullPath;
-    const options = { method: method, headers: headers };
-    if (body !== null && body !== undefined) {
-      options.body = JSON.stringify(body);
-    }
-
     try {
-      const resp = await fetch(url, options);
+      const opts = { method, headers };
+      if (body && method !== "GET") opts.body = JSON.stringify(body);
+
+      const resp = await fetch(url, opts);
       let data = null;
       const text = await resp.text();
-      if (text) { try { data = JSON.parse(text); } catch (e) { data = null; } }
+      if (text) { try { data = JSON.parse(text); } catch (e) {} }
 
-      if (resp.ok) {
-        BMOB_WORKING_HOST = host;
-        return data || {};
+      if (!resp.ok) {
+        const errMsg = (data && (data.error || data.message)) || ("HTTP " + resp.status);
+        throw new Error(errMsg);
       }
-      const errMsg = (data && data.error) ? data.error : ("HTTP " + resp.status);
-      throw new Error("Bmob: " + errMsg);
-    } catch (e) {
-      if (e.message && e.message.indexOf("Bmob:") >= 0) throw e;
-      console.warn("[网络] " + host + ": " + e.message);
-      if (hosts.length === 1 || i === hosts.length - 1) {
-        BMOB_WORKING_HOST = null;
-        throw new Error("无法连接 Bmob，请检查网络");
-      }
+      BMOB_WORKING_HOST = host;
+      return data;
+
+    } catch (err) {
+      // 网络错误或 CORS 失败，尝试下一个域名
+      if (i < hosts.length - 1) continue;
+      throw err;
     }
   }
 }
 
 /**
- * ★ Bmob 文件存储上传（图片上传）
- * 调用 Bmob REST API 的文件上传接口
- * 端点：POST /1/files/{filename}
- * 请求体为文件的二进制数据（不是 JSON）
- * 返回值中包含 url 字段，即图片的公网访问地址
- *
- * @param {File} file - 用户选择的图片文件
- * @returns {string} 上传后的图片 URL
+ * 上传图片到 Bmob 文件存储
+ * 调用 POST /1/files/{filename}
+ * ★★★ 此函数使用 Bmob【文件存储】能力 ★★★
  */
 async function uploadImgToBmob(file) {
+  const fileName = "memo_" + Date.now() + "_" + file.name;
   const hosts = BMOB_WORKING_HOST ? [BMOB_WORKING_HOST] : BMOB_API_HOSTS;
 
   for (let i = 0; i < hosts.length; i++) {
     const host = hosts[i];
-    // 构造文件上传 URL，文件名加上时间戳避免重名
-    const fileName = "memo_" + Date.now() + "_" + file.name;
     const url = host + BMOB_API_PATH + "/files/" + encodeURIComponent(fileName);
 
     try {
@@ -634,7 +689,7 @@ async function uploadImgToBmob(file) {
           "Content-Type": file.type || "application/octet-stream",
           ...(sessionToken ? { "X-Bmob-Session-Token": sessionToken } : {})
         },
-        body: file  // 直接传 File 对象（fetch 支持 Blob/File 作为 body）
+        body: file
       });
 
       let data = null;
@@ -643,177 +698,138 @@ async function uploadImgToBmob(file) {
 
       if (resp.ok && data && data.url) {
         BMOB_WORKING_HOST = host;
-        return data.url;  // 返回图片公网 URL
+        return data.url;
       }
-      throw new Error("上传失败: " + (data && data.error ? data.error : "HTTP " + resp.status));
-    } catch (e) {
-      console.warn("[文件上传] " + host + ": " + e.message);
-      if (hosts.length === 1 || i === hosts.length - 1) {
-        throw new Error("图片上传失败: " + e.message);
-      }
+      if (i < hosts.length - 1) continue;
+      throw new Error(data && data.error ? data.error : "上传失败");
+    } catch (err) {
+      if (i < hosts.length - 1) continue;
+      throw err;
     }
   }
 }
 
-/* ============================================================================
-   3.4 图片上传前端逻辑
-   ======================================================================== */
+/* -------------------------------------------------------
+   3.6 AI 备忘生成器（前端模拟）
+   -------------------------------------------------------
+   ★★★ 此处是产品内置 AI 功能，不是用 AI 写代码 ★★★
+   ★★★ 产品页面自带的 AI 交互能力，拿 Bmob+AI 融合创意分 ★★★
 
-// 当前选中的图片文件（未上传）
-let selectedImgFile = null;
-// 编辑模式下已有的图片 URL
-let editingImgUrl = null;
+   替换为真实大模型的方法：
+   1. 注册百度文心一言/阿里通义千问/智谱ChatGLM，获取 API Key
+   2. 将下面的 generateAIMemo() 函数改为调用真实接口：
+      const resp = await fetch("https://aip.baidubce.com/...", {
+        method: "POST",
+        headers: { "Authorization": "Bearer 你的APIKey" },
+        body: JSON.stringify({ messages: [{role:"user", content: prompt}] })
+      });
+   3. 解析返回结果填入标题和内容即可
+   ------------------------------------------------------- */
 
-/**
- * 用户选择图片后的回调：预览图片，暂存 File 对象
- */
-function onImgSelected(event) {
-  const file = event.target.files[0];
-  if (!file) return;
-
-  // 文件大小限制：5MB
-  if (file.size > 5 * 1024 * 1024) {
-    showToast("图片不能超过 5MB 哦～");
-    event.target.value = "";
-    return;
-  }
-
-  selectedImgFile = file;
-
-  // 显示预览
-  const reader = new FileReader();
-  reader.onload = (e) => {
-    $("imgPreview").src = e.target.result;
-    $("imgPreviewWrap").style.display = "block";
-  };
-  reader.readAsDataURL(file);
-}
-
-/**
- * 清除已选图片
- */
-function clearImg() {
-  selectedImgFile = null;
-  editingImgUrl = null;
-  $("imgInput").value = "";
-  $("imgPreviewWrap").style.display = "none";
-  $("imgPreview").src = "";
-}
-
-/* ============================================================================
-   3.5 ★ AI 选题生成器（模拟实现）
-   ======================================================================== */
+// 模板库：日常待办场景
+const AI_TEMPLATES = [
+  { title: "拿快递", desc: "包裹在驿站，再不取要退回了！" },
+  { title: "给家里打电话", desc: "已经一周没打了，记得问候爸妈" },
+  { title: "整理桌面", desc: "文件堆积如山，花15分钟收拾一下" },
+  { title: "喝水打卡", desc: "一天8杯水，现在第几杯了？" },
+  { title: "交电费", desc: "检查余额，别等停电才想起" },
+  { title: "回复消息", desc: "有好几条未回消息，别让别人等太久" },
+  { title: "预约洗牙", desc: "半年没看牙医了，该约了" },
+  { title: "整理收藏夹", desc: "收藏了100条从没看过，清理一波" },
+  { title: "买日用品", desc: "纸巾/洗衣液快没了，趁周末囤货" },
+  { title: "运动打卡", desc: "哪怕只做10个深蹲，今天也算运动了" },
+  { title: "复盘本周", desc: "写3条做得好的，1条待改进的" },
+  { title: "充公交卡", desc: "余额不足，通勤路上记得充" }
+];
 
 /**
- * AI 选题生成器
- *
- * 这是前端模拟 AI 生成选题的效果。
- * 实际项目中可替换为真实大模型 API，例如：
- *   1. 调用 OpenAI GPT API（需要 API Key）
- *   2. 调用百度文心一言 API
- *   3. 调用 Bmob AI 能力（如有）
- *
- * 替换方法：将本函数中的模拟逻辑替换为
- *   const resp = await fetch("https://api.openai.com/v1/chat/completions", { ... });
- *   const data = await resp.json();
- *   const result = data.choices[0].message.content;
- *   然后解析 result 填入标题和内容
+ * AI 生成备忘内容（前端模拟版）
+ * 根据用户输入的想法，随机组合生成标题和内容
  */
-async function generateAITopic() {
+function generateAIMemo() {
   const idea = $("aiInput").value.trim();
   if (!idea) {
-    showToast("请先输入一个简短想法～");
-    $("aiInput").focus();
+    showToast("先在上方输入框写个想法，奶龙才能帮你生成～");
+    dragonSay("你倒是先写点啥呀 🤔");
     return;
   }
 
   showLoading(true);
+  // 模拟 AI 思考延迟
+  setTimeout(() => {
+    showLoading(false);
+    // 从模板库随机取一个
+    const tpl = AI_TEMPLATES[Math.floor(Math.random() * AI_TEMPLATES.length)];
+    // 把用户想法融入内容
+    const title = tpl.title;
+    const content = "【" + idea + "】\n" + tpl.desc;
 
-  // 模拟 AI 思考延迟（1-2 秒）
-  await new Promise(r => setTimeout(r, 1000 + Math.random() * 1000));
+    $("titleInput").value = title;
+    $("contentInput").focus();
+    $("contentInput").value = content;
 
-  // ===== 模拟 AI 生成逻辑 =====
-  // 根据用户输入的关键词，生成选题标题和脚本框架
-  const topicLib = generateTopicByKeyword(idea);
-
-  // 填充到输入框
-  $("titleInput").value = topicLib.title;
-  $("contentInput").value = topicLib.content;
-
-  showLoading(false);
-  showToast("AI 已生成选题，可编辑后保存 ✨");
-
-  // 聚焦到标题框方便修改
-  $("titleInput").focus();
-  $("titleInput").select();
+    showToast("AI 已生成，检查后点击「添加备忘」保存 ✿");
+    dragonSay("帮你生成好了，要不要改改？");
+  }, 800);
 }
 
-/**
- * 根据关键词生成选题（模拟 AI）
- * 真实场景下可替换为 LLM API 调用
- */
-function generateTopicByKeyword(keyword) {
-  // 选题模板库：按类型分类
-  const templates = [
-    {
-      title: `${keyword} | 5个让人破防的瞬间，第3个绝了`,
-      content: `【选题方向】${keyword} 情感共鸣向\n` +
-              `【开头Hook】谁懂啊家人们，${keyword}这件事真的...\n\n` +
-              `【正文结构】\n` +
-              `1. 场景引入：日常${keyword}的画面感\n` +
-              `2. 冲突升级：意想不到的转折\n` +
-              `3. 情绪爆发：高光时刻\n` +
-              `4. 反转结局：意想不到的结局\n` +
-              `5. 金句收尾：引发共鸣\n\n` +
-              `【预估时长】45-60秒\n` +
-              `【适合平台】抖音/快手/小红书`
-    },
-    {
-      title: `${keyword}攻略｜看完少走3年弯路`,
-      content: `【选题方向】${keyword} 干货分享向\n` +
-              `【开头Hook】如果你也经常${keyword}，一定要看完这条\n\n` +
-              `【正文结构】\n` +
-              `1. 痛点切入：大部分人${keyword}的误区\n` +
-              `2. 方法论：3个核心技巧\n` +
-              `3. 实操演示：手把手教学\n` +
-              `4. 效果对比：before vs after\n` +
-              `5. 总结+引导关注\n\n` +
-              `【预估时长】60-90秒\n` +
-              `【适合平台】抖音/视频号/B站`
-    },
-    {
-      title: `${keyword}日记 Day1｜从今天开始改变`,
-      content: `【选题方向】${keyword} 记录打卡向\n` +
-              `【开头Hook】记录${keyword}的第1天，给自己一个仪式感\n\n` +
-              `【正文结构】\n` +
-              `1. 开头：为什么决定开始${keyword}\n` +
-              `2. 过程记录：今日${keyword}实况\n` +
-              `3. 小插曲：遇到的意外状况\n` +
-              `4. 感悟分享：一点小思考\n` +
-              `5. 互动引导：你们觉得呢？\n\n` +
-              `【预估时长】30-45秒\n` +
-              `【适合平台】小红书/抖音`
-    }
-  ];
+/* -------------------------------------------------------
+   3.7 奶龙彩蛋系统
+   ------------------------------------------------------- */
 
-  // 随机选一个模板
-  return templates[Math.floor(Math.random() * templates.length)];
+// 治愈摆烂短句库
+const DRAGON_QUOTES = [
+  "今天的待办，明天的烦恼～",
+  "摆烂不是不努力，是换个姿势努力",
+  "你这么能干，奶龙很欣慰",
+  "先躺一会，待办又不会跑",
+  "完成一条就够了，剩下的交给明天的自己",
+  "奶龙陪你，不孤单",
+  "别焦虑，慢慢来，事情总会...更多",
+  "能拖到明天的事，何必今天做？",
+  "你已经很棒了，记得喝水",
+  "待办清单太长？闭上眼就好了",
+  "生活不止待办，还有奶龙",
+  "今天的你，比昨天的你...差不多",
+  "别卷了，吃点甜的吧",
+  "完成3条就歇歇，奶龙认证你了不起"
+];
+
+// 点击奶龙图标，随机弹出一句
+function dragonTalk() {
+  const q = DRAGON_QUOTES[Math.floor(Math.random() * DRAGON_QUOTES.length)];
+  dragonSay(q);
 }
 
-/* ============================================================================
-   3.6 状态变量
-   ======================================================================== */
+// 显示奶龙气泡
+let dragonTimer = null;
+function dragonSay(msg) {
+  const b = $("dragonBubble");
+  b.textContent = "🐉 " + msg;
+  b.classList.add("show");
+  clearTimeout(dragonTimer);
+  dragonTimer = setTimeout(() => b.classList.remove("show"), 3500);
+}
+
+// 庆祝弹窗
+function showCelebrate(msg) {
+  $("celebrateMsg").innerHTML = msg;
+  $("celebrate").classList.add("show");
+}
+function closeCelebrate() {
+  $("celebrate").classList.remove("show");
+}
+
+/* -------------------------------------------------------
+   3.8 状态变量 & 数据操作
+   ------------------------------------------------------- */
 
 let memoList = [];
 let editingId = null;
+let pendingImgUrl = null;
 
-/* ============================================================================
-   3.7 数据操作函数：Bmob 数据库 CRUD
-   ======================================================================== */
-
-/** ① 查询当前用户的选题（按创建时间倒序，按 username 筛选） */
+/** 查询当前用户的备忘（按时间倒序，按 username 筛选） */
 async function fetchMemos() {
-  // Bmob where 查询：只返回当前用户的选题
   const where = JSON.stringify({ username: currentUser });
   const data = await bmobRequest("GET",
     "/classes/" + TABLE_NAME + "?where=" + encodeURIComponent(where) + "&order=-createdAt", null);
@@ -821,27 +837,27 @@ async function fetchMemos() {
   renderList();
 }
 
-/** ② 新增选题（自动绑定当前用户名） */
+/** 新增备忘 */
 async function createMemo(title, content, imgUrl) {
   const body = { title, content, isFinish: false, username: currentUser };
   if (imgUrl) body.imgUrl = imgUrl;
   await bmobRequest("POST", "/classes/" + TABLE_NAME, body);
-  showToast("选题已添加 ✿");
+  showToast("备忘已添加 ✿");
 }
 
-/** ③ 修改选题 */
+/** 修改备忘 */
 async function updateMemo(id, patch) {
   await bmobRequest("PUT", "/classes/" + TABLE_NAME + "/" + id, patch);
 }
 
-/** ④ 删除选题 */
+/** 删除备忘 */
 async function deleteMemo(id) {
   await bmobRequest("DELETE", "/classes/" + TABLE_NAME + "/" + id, null);
 }
 
-/* ============================================================================
-   3.8 渲染函数
-   ======================================================================== */
+/* -------------------------------------------------------
+   3.9 渲染列表
+   ------------------------------------------------------- */
 
 function renderList() {
   const wrap = $("memoList");
@@ -849,172 +865,179 @@ function renderList() {
   if (memoList.length === 0) {
     wrap.innerHTML = `
       <div class="empty">
-        <span class="emoji">🎬</span>
-        还没有选题灵感，先记录一条吧～<br/>
-        试试用 AI 生成器快速创建！
+        <span class="emoji">🐉</span>
+        还没有备忘，先记一条吧～<br/>
+        试试 AI 帮你生成！
       </div>`;
     return;
   }
 
-  wrap.innerHTML = memoList.map(m => {
-    const doneClass = m.isFinish ? "done" : "";
-    const checkClass = m.isFinish ? "checked" : "";
-    const timeStr = m.createdAt ? formatTime(m.createdAt) : "";
+  // 全部完成 → 庆祝彩蛋
+  const allDone = memoList.every(m => m.isFinish);
+  if (allDone) {
+    showCelebrate("太厉害了，所有备忘都完成了～<br/>奶龙说你是效率小能手！🐉✨");
+  }
 
-    return `
-      <div class="memo-item ${doneClass}">
-        <div class="memo-head">
-          <div class="memo-check ${checkClass}"
-               onclick="toggleFinish('${m.objectId}', ${!m.isFinish})"></div>
-          <div class="memo-title">${escapeHtml(m.title)}</div>
-          <div class="memo-actions">
-            <button class="btn btn-mini btn-edit"
-                    onclick="startEdit('${m.objectId}')">编辑</button>
-            <button class="btn btn-mini btn-del"
-                    onclick="removeMemo('${m.objectId}')">删除</button>
-          </div>
+  // 待办太多 → 奶龙摆烂提示
+  const unfinished = memoList.filter(m => !m.isFinish);
+  if (unfinished.length >= 8) {
+    dragonSay("这么多待办...奶龙选择躺平 🐉");
+  }
+
+  wrap.innerHTML = memoList.map(m => `
+    <div class="memo-item ${m.isFinish ? 'done' : ''}" data-id="${m.objectId}">
+      <div class="memo-row">
+        <div class="memo-check ${m.isFinish ? 'checked' : ''}" onclick="toggleFinish('${m.objectId}', ${!m.isFinish})">
+          ${m.isFinish ? '✓' : ''}
         </div>
-        ${m.content ? `<div class="memo-content">${escapeHtml(m.content)}</div>` : ""}
-        ${m.imgUrl ? `<img class="memo-img" src="${escapeHtml(m.imgUrl)}" alt="封面图" loading="lazy" />` : ""}
-        ${timeStr ? `<div class="memo-time">${timeStr}</div>` : ""}
-      </div>`;
-  }).join("");
+        <div class="memo-content">
+          <div class="memo-title">${escapeHtml(m.title)}</div>
+          ${m.content ? `<div class="memo-desc">${escapeHtml(m.content)}</div>` : ''}
+          ${m.imgUrl ? `<img class="memo-img" src="${escapeHtml(m.imgUrl)}" alt="图片" loading="lazy" />` : ''}
+        </div>
+      </div>
+      <div class="memo-actions">
+        <button class="btn-mini btn-edit" onclick="startEdit('${m.objectId}')">编辑</button>
+        <button class="btn-mini btn-del" onclick="delMemo('${m.objectId}')">删除</button>
+      </div>
+    </div>
+  `).join("");
 }
 
-/* ============================================================================
-   3.9 业务事件函数
-   ======================================================================== */
+/* -------------------------------------------------------
+   3.10 操作函数
+   ------------------------------------------------------- */
 
-/** 勾选/取消完成 */
-async function toggleFinish(id, val) {
-  showLoading(true);
-  try {
-    await updateMemo(id, { isFinish: val });
-    const m = memoList.find(x => x.objectId === id);
-    if (m) m.isFinish = val;
-    renderList();
-    showToast(val ? "已标记完成 ✓" : "已取消完成");
-  } catch (e) {
-    showToast(e.message);
-  } finally {
-    showLoading(false);
-  }
-}
-
-/** 进入编辑模式 */
-function startEdit(id) {
-  const m = memoList.find(x => x.objectId === id);
-  if (!m) return;
-  editingId = id;
-  $("titleInput").value = m.title || "";
-  $("contentInput").value = m.content || "";
-
-  // 编辑模式下回显图片
-  editingImgUrl = m.imgUrl || null;
-  selectedImgFile = null;
-  if (m.imgUrl) {
-    $("imgPreview").src = m.imgUrl;
-    $("imgPreviewWrap").style.display = "block";
-  } else {
-    $("imgPreviewWrap").style.display = "none";
-  }
-
-  $("submitBtn").textContent = "保存修改";
-  $("cancelBtn").style.display = "block";
-  $("titleInput").focus();
-  window.scrollTo({ top: 0, behavior: "smooth" });
-}
-
-/** 退出编辑模式 */
-function exitEditMode() {
-  editingId = null;
-  $("titleInput").value = "";
-  $("contentInput").value = "";
-  $("aiInput").value = "";
-  clearImg();
-  $("submitBtn").textContent = "＋ 添加选题";
-  $("cancelBtn").style.display = "none";
-}
-
-/** 删除选题 */
-async function removeMemo(id) {
-  if (!confirm("确定删除这条选题吗？删除后不可恢复～")) return;
-  showLoading(true);
-  try {
-    await deleteMemo(id);
-    if (editingId === id) exitEditMode();
-    await fetchMemos();
-    showToast("已删除");
-  } catch (e) {
-    showToast(e.message);
-  } finally {
-    showLoading(false);
-  }
-}
-
-/* ============================================================================
-   3.10 表单提交：新增 / 保存共用
-   ======================================================================== */
-
-$("submitBtn").addEventListener("click", async () => {
-  const title   = $("titleInput").value.trim();
+// 提交（新增或更新）
+async function submitMemo() {
+  const title = $("titleInput").value.trim();
   const content = $("contentInput").value.trim();
-
   if (!title) {
-    showToast("请填写选题标题～");
-    $("titleInput").focus();
+    showToast("标题不能为空");
+    dragonSay("写个标题嘛～");
     return;
   }
 
   showLoading(true);
   try {
     if (editingId) {
-      // ---- 编辑模式 ----
-      const patch = { title: title, content: content };
-
-      // 如果选了新图片，先上传再更新
-      if (selectedImgFile) {
-        showToast("正在上传图片...");
-        const imgUrl = await uploadImgToBmob(selectedImgFile);
-        patch.imgUrl = imgUrl;
-      } else if (!editingImgUrl) {
-        // 编辑模式下如果清除了图片
-        patch.imgUrl = "";
-      }
-
+      // 编辑模式
+      const patch = { title, content };
+      if (pendingImgUrl) patch.imgUrl = pendingImgUrl;
       await updateMemo(editingId, patch);
-      showToast("修改已保存 ✿");
+      showToast("修改成功 ✿");
       exitEditMode();
     } else {
-      // ---- 新增模式 ----
-      let imgUrl = null;
-
-      // 如果选了图片，先上传到 Bmob 文件存储
-      if (selectedImgFile) {
-        showToast("正在上传图片...");
-        imgUrl = await uploadImgToBmob(selectedImgFile);
-      }
-
-      await createMemo(title, content, imgUrl);
-      $("titleInput").value = "";
-      $("contentInput").value = "";
-      $("aiInput").value = "";
-      clearImg();
+      // 新增模式
+      await createMemo(title, content, pendingImgUrl);
     }
-
-    // 重新拉取列表
+    resetForm();
     await fetchMemos();
   } catch (e) {
-    showToast(e.message);
+    showToast("操作失败：" + e.message);
+  } finally {
+    showLoading(false);
+  }
+}
+
+// 切换完成状态
+async function toggleFinish(id, finish) {
+  try {
+    await updateMemo(id, { isFinish: finish });
+    await fetchMemos();
+  } catch (e) {
+    showToast("操作失败：" + e.message);
+  }
+}
+
+// 进入编辑模式
+function startEdit(id) {
+  const m = memoList.find(x => x.objectId === id);
+  if (!m) return;
+  editingId = id;
+  $("titleInput").value = m.title || "";
+  $("contentInput").value = m.content || "";
+  $("submitBtn").textContent = "💾 保存修改";
+  $("editBar").classList.add("show");
+  pendingImgUrl = m.imgUrl || null;
+  if (m.imgUrl) {
+    $("imgPreview").src = m.imgUrl;
+    $("imgPreview").style.display = "block";
+  }
+  $("titleInput").focus();
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+// 退出编辑模式
+function exitEditMode() {
+  editingId = null;
+  $("submitBtn").textContent = "＋ 添加备忘";
+  $("editBar").classList.remove("show");
+  resetForm();
+}
+
+// 重置表单
+function resetForm() {
+  $("titleInput").value = "";
+  $("contentInput").value = "";
+  $("aiInput").value = "";
+  $("imgPreview").style.display = "none";
+  $("imgPreview").src = "";
+  $("fileInput").value = "";
+  pendingImgUrl = null;
+}
+
+// 删除
+async function delMemo(id) {
+  if (!confirm("确定删除这条备忘吗？")) return;
+  try {
+    await deleteMemo(id);
+    await fetchMemos();
+    showToast("已删除");
+    dragonSay("删掉了，轻松一点～");
+  } catch (e) {
+    showToast("删除失败：" + e.message);
+  }
+}
+
+/* -------------------------------------------------------
+   3.11 图片上传处理
+   ------------------------------------------------------- */
+
+$("fileInput").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  if (file.size > 5 * 1024 * 1024) {
+    showToast("图片不能超过 5MB");
+    return;
+  }
+
+  // 本地预览
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    $("imgPreview").src = ev.target.result;
+    $("imgPreview").style.display = "block";
+  };
+  reader.readAsDataURL(file);
+
+  // 上传到 Bmob 文件存储
+  showLoading(true);
+  try {
+    const url = await uploadImgToBmob(file);
+    pendingImgUrl = url;
+    showToast("图片上传成功 ✿");
+  } catch (err) {
+    showToast("图片上传失败：" + err.message);
+    $("imgPreview").style.display = "none";
   } finally {
     showLoading(false);
   }
 });
 
-// 取消编辑按钮
-$("cancelBtn").addEventListener("click", exitEditMode);
+/* -------------------------------------------------------
+   3.12 事件监听 & 键盘快捷键
+   ------------------------------------------------------- */
 
-// 回车快捷键
 $("titleInput").addEventListener("keydown", (e) => {
   if (e.key === "Enter") { e.preventDefault(); $("contentInput").focus(); }
 });
@@ -1023,50 +1046,47 @@ $("contentInput").addEventListener("keydown", (e) => {
     e.preventDefault(); $("submitBtn").click();
   }
 });
-
-// 登录框回车提交
 $("loginPass").addEventListener("keydown", (e) => {
-  if (e.key === "Enter") {
-    e.preventDefault();
-    $("loginBtn").click();
-  }
+  if (e.key === "Enter") { e.preventDefault(); $("loginBtn").click(); }
 });
 
-/* ============================================================================
-   3.11 页面初始化
-   ======================================================================== */
+/* -------------------------------------------------------
+   3.13 页面初始化
+   ------------------------------------------------------- */
 
-(async function init() {
-  // 恢复之前的登录状态
-  restoreSession();
+(function init() {
+  initTheme();           // 加载主题配色
+  restoreSession();      // 恢复登录状态
 
   if (currentUser && sessionToken) {
-    // 已登录：显示用户栏，加载数据
-    $("userBar").style.display = "flex";
+    // 已登录
+    $("userBar").style.display = "block";
     $("userName").textContent = currentUser;
     showLoading(true);
-    try {
-      await fetchMemos();
-    } catch (e) {
-      $("memoList").innerHTML = `
-        <div class="empty">
-          <span class="emoji">😵</span>
-          加载失败：${escapeHtml(e.message)}
-          <div style="margin-top:16px;font-size:13px;color:#b0967a;line-height:1.8;text-align:left;padding:0 10px;">
-            <b>💡 排查步骤：</b><br/>
-            1. 确认 Bmob 后台已创建 <b>Memo</b> 数据表<br/>
-            &nbsp;&nbsp;&nbsp;字段：title(String) / content(String) / isFinish(Boolean) / imgUrl(String) / username(String)<br/>
-            2. 按 F12 打开浏览器控制台查看详细错误<br/>
-            3. 确认网络能访问 api.bmobcloud.com
-          </div>
-        </div>`;
-    } finally {
-      showLoading(false);
-    }
+    fetchMemos()
+      .catch(e => {
+        $("memoList").innerHTML = `
+          <div class="empty">
+            <span class="emoji">😵</span>
+            加载失败：${escapeHtml(e.message)}
+            <div style="margin-top:14px;font-size:13px;color:var(--text-l);line-height:1.8;text-align:left;padding:0 10px;">
+              <b>💡 排查步骤：</b><br/>
+              1. 确认 Bmob 后台 Memo 表字段：title / content / isFinish / imgUrl / username<br/>
+              2. 按 F12 查看控制台错误<br/>
+              3. 确认网络能访问 api.bmobcloud.com
+            </div>
+          </div>`;
+      })
+      .finally(() => showLoading(false));
   } else {
-    // 未登录：显示登录弹窗
+    // 未登录
     $("loginOverlay").classList.add("show");
   }
+
+  // 开场奶龙问候
+  setTimeout(() => {
+    dragonSay("嗨，我是奶龙，帮你记事的～");
+  }, 1000);
 })();
 
 </script>
