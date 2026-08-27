@@ -894,6 +894,7 @@ let editingId = null;
 let pendingImgUrl = null;
 let selectedTag = null;        // 表单选中的标签
 let activeFilter = "all";     // 列表筛选标签
+let isInitialLoad = true;     // 标记是否为首次加载（防止庆祝弹窗在刷新时重复弹出）
 
 /** 表单中选择标签 */
 function pickTag(tag) {
@@ -982,9 +983,9 @@ function renderList() {
     return;
   }
 
-  // 全部完成 → 庆祝弹窗
+  // 全部完成 → 庆祝弹窗（仅用户主动操作时触发，刷新页面不弹）
   const allDone = memoList.length > 0 && memoList.every(m => m.isFinish);
-  if (allDone) {
+  if (allDone && !isInitialLoad) {
     showCelebrate("太厉害了，所有备忘都完成了～🎉");
   }
 
@@ -1234,18 +1235,32 @@ $("loginPass").addEventListener("keydown", (e) => {
     $("userName").textContent = currentUser;
     showLoading(true);
     fetchMemos()
+      .then(() => {
+        // 首次加载完成，后续操作才触发庆祝弹窗
+        isInitialLoad = false;
+      })
       .catch(e => {
-        $("memoList").innerHTML = `
-          <div class="empty">
-            <span class="emoji">😵</span>
-            加载失败：${escapeHtml(e.message)}
-            <div style="margin-top:14px;font-size:13px;color:var(--text-l);line-height:1.8;text-align:left;padding:0 10px;">
-              <b>💡 排查步骤：</b><br/>
-              1. 确认 Bmob 后台 Memo 表字段：title/content/isFinish/imgUrl/username/tag<br/>
-              2. 按 F12 查看控制台错误<br/>
-              3. 确认网络能访问 api.bmobcloud.com
-            </div>
-          </div>`;
+        // session token 失效 → 清除登录态，弹出登录页
+        if (e.message.includes("session") || e.message.includes("101") || e.message.includes("401")) {
+          clearSession();
+          $("userBar").style.display = "none";
+          $("statsBoard").style.display = "none";
+          $("toolbar").style.display = "none";
+          $("loginOverlay").classList.add("show");
+          showToast("登录已过期，请重新登录");
+        } else {
+          $("memoList").innerHTML = `
+            <div class="empty">
+              <span class="emoji">😵</span>
+              加载失败：${escapeHtml(e.message)}
+              <div style="margin-top:14px;font-size:13px;color:var(--text-l);line-height:1.8;text-align:left;padding:0 10px;">
+                <b>💡 排查步骤：</b><br/>
+                1. 确认 Bmob 后台 Memo 表字段：title/content/isFinish/imgUrl/username/tag<br/>
+                2. 按 F12 查看控制台错误<br/>
+                3. 确认网络能访问 api.bmobcloud.com
+              </div>
+            </div>`;
+        }
       })
       .finally(() => showLoading(false));
   } else {
