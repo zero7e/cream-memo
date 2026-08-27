@@ -1,0 +1,860 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>新媒体选题备忘录 · 灵感收集器</title>
+
+<!--
+================================================================================
+  新媒体选题备忘录 v2.0（单文件版）
+  技术栈：原生 HTML + CSS + JavaScript（零框架、零外部依赖）
+  后端：Bmob 后端云 REST API（数据库 + 文件存储，不使用 localStorage）
+
+  ★★★ 手动配置区 ★★★
+  请把下面 APPLICATION_ID 和 REST_API_KEY 换成你自己的 Bmob 密钥：
+  1. 登录 Bmob 后台 → 设置 → 应用密钥
+  2. 复制 Application ID → 填到 APPLICATION_ID
+  3. 复制 REST API Key    → 填到 REST_API_KEY
+
+  ★★★ Bmob 后台数据表配置 ★★★
+  表名：Memo
+  字段：
+    title     String    选题标题
+    content   String    脚本/灵感内容
+    isFinish  Boolean   是否已发布/完成
+    imgUrl    String    封面图片URL（Bmob文件存储返回的链接）
+  注意：imgUrl 字段需在 Bmob 后台手动新增，客户端不可见不要勾选。
+
+  ★★★ 部署说明 ★★★
+  - 本地调试：双击 start-server.bat，通过 http://localhost:8001 访问
+  - 公网部署：上传到 Vercel / Netlify / GitHub Pages 即可获得 HTTPS 链接
+================================================================================
+-->
+
+<style>
+/* ==========================================================================
+   一、CSS 样式区：奶油黄治愈风格（保持不变）
+   ========================================================================== */
+
+* {
+  margin: 0; padding: 0; box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html, body { min-height: 100%; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+               "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  background: linear-gradient(160deg, #FFF8E7 0%, #FFF3D9 50%, #FFEBC2 100%);
+  background-attachment: fixed;
+  color: #6b5b3e;
+  padding: 18px 14px 60px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+.container {
+  max-width: 720px;
+  margin: 0 auto;
+  background: #FFFDF6;
+  border-radius: 28px;
+  padding: 26px 22px 30px;
+  box-shadow: 0 10px 30px rgba(180, 150, 90, 0.18), 0 2px 8px rgba(180, 150, 90, 0.08);
+}
+
+/* 标题区 */
+.header { text-align: center; margin-bottom: 22px; }
+.header h1 { font-size: 26px; font-weight: 700; color: #b8860b; letter-spacing: 1px; }
+.header .subtitle { font-size: 13px; color: #b0967a; margin-top: 6px; }
+
+/* 输入表单卡片 */
+.form-card {
+  background: #FFF6E0;
+  border-radius: 20px;
+  padding: 18px 16px;
+  margin-bottom: 22px;
+  box-shadow: inset 0 1px 3px rgba(180, 150, 90, 0.10);
+}
+.form-card input[type="text"],
+.form-card textarea {
+  width: 100%; border: none; outline: none;
+  background: #FFFDF6; border-radius: 14px;
+  padding: 12px 14px; font-size: 15px; color: #6b5b3e;
+  font-family: inherit; resize: vertical;
+  box-shadow: inset 0 0 0 1.5px rgba(180, 150, 90, 0.18);
+  transition: box-shadow 0.2s ease;
+}
+.form-card input[type="text"] { margin-bottom: 12px; }
+.form-card input[type="text"]:focus,
+.form-card textarea:focus {
+  box-shadow: inset 0 0 0 2px #f0c04a;
+}
+.form-card textarea { min-height: 80px; }
+
+/* AI 输入区 */
+.ai-section {
+  background: #FFF9EC;
+  border-radius: 14px;
+  padding: 12px;
+  margin-bottom: 12px;
+  border: 1.5px dashed #f0c04a;
+}
+.ai-section .ai-label {
+  font-size: 13px; font-weight: 600; color: #9a7b1f; margin-bottom: 8px;
+}
+.ai-section input[type="text"] {
+  width: 100%; border: none; outline: none;
+  background: #FFFDF6; border-radius: 10px;
+  padding: 10px 12px; font-size: 14px; color: #6b5b3e;
+  box-shadow: inset 0 0 0 1.5px rgba(180, 150, 90, 0.15);
+  margin-bottom: 8px;
+}
+.btn-ai {
+  width: 100%; border: none; cursor: pointer;
+  font-family: inherit; font-size: 14px; font-weight: 600;
+  border-radius: 10px; padding: 10px;
+  background: linear-gradient(135deg, #d4a8f0, #b07ee0);
+  color: #fff;
+  box-shadow: 0 4px 10px rgba(176, 126, 224, 0.30);
+  transition: transform 0.15s ease, box-shadow 0.2s ease;
+}
+.btn-ai:active { transform: scale(0.96); }
+.btn-ai:hover { box-shadow: 0 6px 14px rgba(176, 126, 224, 0.40); }
+
+/* 图片上传区 */
+.img-upload-area {
+  display: flex; align-items: center; gap: 12px;
+  margin-bottom: 12px; flex-wrap: wrap;
+}
+.img-upload-btn {
+  position: relative; display: inline-flex; align-items: center;
+  justify-content: center; gap: 6px;
+  background: #FFF1C2; border: 2px dashed #f0c04a;
+  border-radius: 14px; padding: 10px 16px;
+  font-size: 14px; color: #9a7b1f; cursor: pointer;
+  transition: all 0.2s ease;
+}
+.img-upload-btn:hover { background: #FFE9A8; }
+.img-upload-btn input[type="file"] {
+  position: absolute; inset: 0; opacity: 0; cursor: pointer;
+}
+.img-preview {
+  width: 70px; height: 70px; border-radius: 12px;
+  object-fit: cover; border: 1.5px solid #f0c04a;
+}
+.img-preview-wrap { position: relative; }
+.img-preview-del {
+  position: absolute; top: -6px; right: -6px;
+  width: 20px; height: 20px; border-radius: 50%;
+  background: #c0506a; color: #fff; border: none;
+  font-size: 12px; cursor: pointer; display: flex;
+  align-items: center; justify-content: center;
+}
+
+/* 按钮样式 */
+.btn {
+  border: none; outline: none; cursor: pointer;
+  font-family: inherit; font-size: 15px; font-weight: 600;
+  border-radius: 14px; padding: 11px 18px;
+  transition: transform 0.15s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+.btn:active { transform: scale(0.96); }
+.btn-primary {
+  background: linear-gradient(135deg, #ffd97a, #f0b429);
+  color: #6b4a12;
+  box-shadow: 0 6px 14px rgba(240, 180, 41, 0.35);
+  width: 100%; margin-top: 12px; padding: 13px; font-size: 16px;
+}
+.btn-primary:hover { box-shadow: 0 8px 18px rgba(240, 180, 41, 0.45); }
+.btn-mini { font-size: 13px; padding: 7px 12px; border-radius: 10px; }
+.btn-edit { background: #FFF1C2; color: #9a7b1f; }
+.btn-del  { background: #FFE0E0; color: #c0506a; }
+.btn-edit:hover { background: #FFE9A8; }
+.btn-del:hover  { background: #FFCECE; }
+.btn-cancel {
+  background: #EFEFEF; color: #888;
+  width: 100%; margin-top: 8px; padding: 10px; font-size: 14px;
+}
+
+/* 笔记列表 */
+.list { display: flex; flex-direction: column; gap: 14px; }
+.memo-item {
+  background: #FFFDF6; border-radius: 18px; padding: 14px 16px;
+  box-shadow: 0 4px 12px rgba(180, 150, 90, 0.12);
+  transition: transform 0.15s ease, box-shadow 0.2s ease;
+  border: 1.5px solid rgba(240, 192, 74, 0.18);
+}
+.memo-item:hover { transform: translateY(-2px); box-shadow: 0 8px 18px rgba(180, 150, 90, 0.18); }
+.memo-item.done { background: #FBF3E0; opacity: 0.85; }
+.memo-item.done .memo-title, .memo-item.done .memo-content { text-decoration: line-through; color: #b0967a; }
+
+.memo-head { display: flex; align-items: center; gap: 10px; }
+.memo-check {
+  flex: 0 0 auto; width: 24px; height: 24px; border-radius: 50%;
+  border: 2px solid #f0c04a; background: #FFFDF6; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px; color: #fff; transition: all 0.2s ease;
+}
+.memo-check.checked { background: #6cc24a; border-color: #6cc24a; }
+.memo-check.checked::after { content: "✓"; font-weight: bold; }
+.memo-title { flex: 1; font-size: 16px; font-weight: 700; color: #8a6a2a; word-break: break-all; }
+.memo-actions { display: flex; gap: 6px; flex-shrink: 0; }
+
+.memo-content { margin-top: 8px; font-size: 14px; color: #7a6647; white-space: pre-wrap; word-break: break-all; }
+.memo-img { width: 100%; max-width: 200px; height: auto; border-radius: 12px; margin-top: 10px; border: 1.5px solid rgba(240,192,74,0.20); }
+.memo-time { margin-top: 8px; font-size: 11px; color: #c2a978; }
+
+.empty { text-align: center; padding: 40px 10px; color: #c2a978; font-size: 14px; }
+.empty .emoji { font-size: 40px; display: block; margin-bottom: 8px; }
+
+/* 提示浮层 */
+.toast {
+  position: fixed; left: 50%; bottom: 30px;
+  transform: translateX(-50%) translateY(20px);
+  background: rgba(107, 91, 62, 0.92); color: #fff;
+  padding: 10px 18px; border-radius: 20px; font-size: 13px;
+  opacity: 0; pointer-events: none; transition: all 0.3s ease;
+  z-index: 999; white-space: nowrap;
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* 加载遮罩 */
+.loading-mask {
+  display: none; position: fixed; inset: 0;
+  background: rgba(255, 243, 217, 0.6); z-index: 998;
+  align-items: center; justify-content: center;
+}
+.loading-mask.show { display: flex; }
+.loading-mask .spinner {
+  width: 38px; height: 38px; border: 4px solid #f0c04a;
+  border-top-color: transparent; border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* 响应式 */
+@media (max-width: 480px) {
+  body { padding: 10px 8px 40px; }
+  .container { padding: 20px 14px 24px; border-radius: 22px; }
+  .header h1 { font-size: 22px; }
+  .memo-title { font-size: 15px; }
+  .btn-mini { padding: 6px 9px; font-size: 12px; }
+}
+@media (min-width: 768px) {
+  body { padding: 30px 16px 60px; }
+  .container { padding: 34px 38px 38px; }
+}
+</style>
+</head>
+
+<body>
+
+<!-- ============================================================================
+     二、HTML 结构区
+     ===================================================================== -->
+<div class="container">
+
+  <!-- 顶部标题 -->
+  <div class="header">
+    <h1>新媒体选题备忘录</h1>
+    <div class="subtitle">收集你的短视频灵感，让创意不溜走 ✿</div>
+  </div>
+
+  <!-- 输入表单卡片 -->
+  <div class="form-card">
+
+    <!-- AI 生成区：输入想法，AI 自动生成选题和脚本 -->
+    <div class="ai-section">
+      <div class="ai-label">🤖 AI 选题生成器</div>
+      <input type="text" id="aiInput" maxlength="100"
+             placeholder="输入简短想法，如「打工人日常」「宠物搞笑」" />
+      <button class="btn-ai" id="aiBtn" onclick="generateAITopic()">✨ AI生成新媒体选题</button>
+    </div>
+
+    <!-- 选题标题输入框 -->
+    <input type="text" id="titleInput" maxlength="50"
+           placeholder="选题标题（如：5个让打工人破防的瞬间）" />
+
+    <!-- 脚本/灵感内容输入框 -->
+    <textarea id="contentInput" maxlength="2000"
+              placeholder="脚本/灵感描述（选填，可换行）"></textarea>
+
+    <!-- 图片上传区 -->
+    <div class="img-upload-area" id="imgUploadArea">
+      <label class="img-upload-btn">
+        📷 上传封面图
+        <input type="file" id="imgInput" accept="image/*" onchange="onImgSelected(event)" />
+      </label>
+      <div id="imgPreviewWrap" style="display:none;" class="img-preview-wrap">
+        <img class="img-preview" id="imgPreview" />
+        <button class="img-preview-del" onclick="clearImg()">✕</button>
+      </div>
+    </div>
+
+    <!-- 主按钮：新增 / 保存 -->
+    <button class="btn btn-primary" id="submitBtn">＋ 添加选题</button>
+    <button class="btn btn-cancel" id="cancelBtn" style="display:none;">取消编辑</button>
+  </div>
+
+  <!-- 选题列表 -->
+  <div class="list" id="memoList"></div>
+
+</div>
+
+<!-- 加载遮罩 -->
+<div class="loading-mask" id="loadingMask"><div class="spinner"></div></div>
+<!-- 轻提示 -->
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+
+/* ============================================================================
+   3.1 ★★★ Bmob 配置区 ★★★
+   ======================================================================== */
+
+const APPLICATION_ID = "6dd518b7fba75a11b75f9863883616a9";
+const REST_API_KEY   = "9099ac88fc936a9ea14cff5e0844ac30";
+const TABLE_NAME     = "Memo";
+
+// Bmob API 域名列表（按优先级排序）
+const BMOB_API_HOSTS = [
+  "https://api.bmobcloud.com",
+  "https://api.bmobapp.com",
+  "https://api.bmob.cn"
+];
+const BMOB_API_PATH = "/1";
+let BMOB_WORKING_HOST = null;
+
+/* ============================================================================
+   3.2 工具函数
+   ======================================================================== */
+
+const $ = (id) => document.getElementById(id);
+
+function showToast(msg) {
+  const t = $("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(showToast._timer);
+  showToast._timer = setTimeout(() => t.classList.remove("show"), 3000);
+}
+
+function showLoading(show) {
+  $("loadingMask").classList.toggle("show", show);
+}
+
+// HTML 转义：防止用户输入破坏页面结构
+function escapeHtml(str) {
+  if (str == null) return "";
+  return String(str)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+// 时间格式化
+function formatTime(iso) {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  const pad = (n) => String(n).padStart(2, "0");
+  return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate())
+       + " " + pad(d.getHours()) + ":" + pad(d.getMinutes());
+}
+
+/* ============================================================================
+   3.3 Bmob REST API 请求函数
+   使用原生 fetch，HTTP 头传递密钥，多域名自动降级
+   ======================================================================== */
+
+/**
+ * Bmob 数据库操作请求（JSON 格式）
+ * @param {string} method - GET/POST/PUT/DELETE
+ * @param {string} path   - 路径，如 /classes/Memo
+ * @param {object} body   - 请求体（可选）
+ */
+async function bmobRequest(method, path, body) {
+  const fullPath = BMOB_API_PATH + path;
+  const headers = {
+    "X-Bmob-Application-Id": APPLICATION_ID,
+    "X-Bmob-REST-API-Key": REST_API_KEY,
+    "Content-Type": "application/json"
+  };
+
+  const hosts = BMOB_WORKING_HOST ? [BMOB_WORKING_HOST] : BMOB_API_HOSTS;
+
+  for (let i = 0; i < hosts.length; i++) {
+    const host = hosts[i];
+    const url = host + fullPath;
+    const options = { method: method, headers: headers };
+    if (body !== null && body !== undefined) {
+      options.body = JSON.stringify(body);
+    }
+
+    try {
+      const resp = await fetch(url, options);
+      let data = null;
+      const text = await resp.text();
+      if (text) { try { data = JSON.parse(text); } catch (e) { data = null; } }
+
+      if (resp.ok) {
+        BMOB_WORKING_HOST = host;
+        return data || {};
+      }
+      const errMsg = (data && data.error) ? data.error : ("HTTP " + resp.status);
+      throw new Error("Bmob: " + errMsg);
+    } catch (e) {
+      if (e.message && e.message.indexOf("Bmob:") >= 0) throw e;
+      console.warn("[网络] " + host + ": " + e.message);
+      if (hosts.length === 1 || i === hosts.length - 1) {
+        BMOB_WORKING_HOST = null;
+        throw new Error("无法连接 Bmob，请检查网络");
+      }
+    }
+  }
+}
+
+/**
+ * ★ Bmob 文件存储上传（图片上传）
+ * 调用 Bmob REST API 的文件上传接口
+ * 端点：POST /1/files/{filename}
+ * 请求体为文件的二进制数据（不是 JSON）
+ * 返回值中包含 url 字段，即图片的公网访问地址
+ *
+ * @param {File} file - 用户选择的图片文件
+ * @returns {string} 上传后的图片 URL
+ */
+async function uploadImgToBmob(file) {
+  const hosts = BMOB_WORKING_HOST ? [BMOB_WORKING_HOST] : BMOB_API_HOSTS;
+
+  for (let i = 0; i < hosts.length; i++) {
+    const host = hosts[i];
+    // 构造文件上传 URL，文件名加上时间戳避免重名
+    const fileName = "memo_" + Date.now() + "_" + file.name;
+    const url = host + BMOB_API_PATH + "/files/" + encodeURIComponent(fileName);
+
+    try {
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: {
+          "X-Bmob-Application-Id": APPLICATION_ID,
+          "X-Bmob-REST-API-Key": REST_API_KEY,
+          "Content-Type": file.type || "application/octet-stream"
+        },
+        body: file  // 直接传 File 对象（fetch 支持 Blob/File 作为 body）
+      });
+
+      let data = null;
+      const text = await resp.text();
+      if (text) { try { data = JSON.parse(text); } catch (e) {} }
+
+      if (resp.ok && data && data.url) {
+        BMOB_WORKING_HOST = host;
+        return data.url;  // 返回图片公网 URL
+      }
+      throw new Error("上传失败: " + (data && data.error ? data.error : "HTTP " + resp.status));
+    } catch (e) {
+      console.warn("[文件上传] " + host + ": " + e.message);
+      if (hosts.length === 1 || i === hosts.length - 1) {
+        throw new Error("图片上传失败: " + e.message);
+      }
+    }
+  }
+}
+
+/* ============================================================================
+   3.4 图片上传前端逻辑
+   ======================================================================== */
+
+// 当前选中的图片文件（未上传）
+let selectedImgFile = null;
+// 编辑模式下已有的图片 URL
+let editingImgUrl = null;
+
+/**
+ * 用户选择图片后的回调：预览图片，暂存 File 对象
+ */
+function onImgSelected(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  // 文件大小限制：5MB
+  if (file.size > 5 * 1024 * 1024) {
+    showToast("图片不能超过 5MB 哦～");
+    event.target.value = "";
+    return;
+  }
+
+  selectedImgFile = file;
+
+  // 显示预览
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    $("imgPreview").src = e.target.result;
+    $("imgPreviewWrap").style.display = "block";
+  };
+  reader.readAsDataURL(file);
+}
+
+/**
+ * 清除已选图片
+ */
+function clearImg() {
+  selectedImgFile = null;
+  editingImgUrl = null;
+  $("imgInput").value = "";
+  $("imgPreviewWrap").style.display = "none";
+  $("imgPreview").src = "";
+}
+
+/* ============================================================================
+   3.5 ★ AI 选题生成器（模拟实现）
+   ======================================================================== */
+
+/**
+ * AI 选题生成器
+ *
+ * 这是前端模拟 AI 生成选题的效果。
+ * 实际项目中可替换为真实大模型 API，例如：
+ *   1. 调用 OpenAI GPT API（需要 API Key）
+ *   2. 调用百度文心一言 API
+ *   3. 调用 Bmob AI 能力（如有）
+ *
+ * 替换方法：将本函数中的模拟逻辑替换为
+ *   const resp = await fetch("https://api.openai.com/v1/chat/completions", { ... });
+ *   const data = await resp.json();
+ *   const result = data.choices[0].message.content;
+ *   然后解析 result 填入标题和内容
+ */
+async function generateAITopic() {
+  const idea = $("aiInput").value.trim();
+  if (!idea) {
+    showToast("请先输入一个简短想法～");
+    $("aiInput").focus();
+    return;
+  }
+
+  showLoading(true);
+
+  // 模拟 AI 思考延迟（1-2 秒）
+  await new Promise(r => setTimeout(r, 1000 + Math.random() * 1000));
+
+  // ===== 模拟 AI 生成逻辑 =====
+  // 根据用户输入的关键词，生成选题标题和脚本框架
+  const topicLib = generateTopicByKeyword(idea);
+
+  // 填充到输入框
+  $("titleInput").value = topicLib.title;
+  $("contentInput").value = topicLib.content;
+
+  showLoading(false);
+  showToast("AI 已生成选题，可编辑后保存 ✨");
+
+  // 聚焦到标题框方便修改
+  $("titleInput").focus();
+  $("titleInput").select();
+}
+
+/**
+ * 根据关键词生成选题（模拟 AI）
+ * 真实场景下可替换为 LLM API 调用
+ */
+function generateTopicByKeyword(keyword) {
+  // 选题模板库：按类型分类
+  const templates = [
+    {
+      title: `${keyword} | 5个让人破防的瞬间，第3个绝了`,
+      content: `【选题方向】${keyword} 情感共鸣向\n` +
+              `【开头Hook】谁懂啊家人们，${keyword}这件事真的...\n\n` +
+              `【正文结构】\n` +
+              `1. 场景引入：日常${keyword}的画面感\n` +
+              `2. 冲突升级：意想不到的转折\n` +
+              `3. 情绪爆发：高光时刻\n` +
+              `4. 反转结局：意想不到的结局\n` +
+              `5. 金句收尾：引发共鸣\n\n` +
+              `【预估时长】45-60秒\n` +
+              `【适合平台】抖音/快手/小红书`
+    },
+    {
+      title: `${keyword}攻略｜看完少走3年弯路`,
+      content: `【选题方向】${keyword} 干货分享向\n` +
+              `【开头Hook】如果你也经常${keyword}，一定要看完这条\n\n` +
+              `【正文结构】\n` +
+              `1. 痛点切入：大部分人${keyword}的误区\n` +
+              `2. 方法论：3个核心技巧\n` +
+              `3. 实操演示：手把手教学\n` +
+              `4. 效果对比：before vs after\n` +
+              `5. 总结+引导关注\n\n` +
+              `【预估时长】60-90秒\n` +
+              `【适合平台】抖音/视频号/B站`
+    },
+    {
+      title: `${keyword}日记 Day1｜从今天开始改变`,
+      content: `【选题方向】${keyword} 记录打卡向\n` +
+              `【开头Hook】记录${keyword}的第1天，给自己一个仪式感\n\n` +
+              `【正文结构】\n` +
+              `1. 开头：为什么决定开始${keyword}\n` +
+              `2. 过程记录：今日${keyword}实况\n` +
+              `3. 小插曲：遇到的意外状况\n` +
+              `4. 感悟分享：一点小思考\n` +
+              `5. 互动引导：你们觉得呢？\n\n` +
+              `【预估时长】30-45秒\n` +
+              `【适合平台】小红书/抖音`
+    }
+  ];
+
+  // 随机选一个模板
+  return templates[Math.floor(Math.random() * templates.length)];
+}
+
+/* ============================================================================
+   3.6 状态变量
+   ======================================================================== */
+
+let memoList = [];
+let editingId = null;
+
+/* ============================================================================
+   3.7 数据操作函数：Bmob 数据库 CRUD
+   ======================================================================== */
+
+/** ① 查询全部选题（按创建时间倒序） */
+async function fetchMemos() {
+  const data = await bmobRequest("GET", "/classes/" + TABLE_NAME + "?order=-createdAt", null);
+  memoList = data.results || [];
+  renderList();
+}
+
+/** ② 新增选题 */
+async function createMemo(title, content, imgUrl) {
+  const body = { title, content, isFinish: false };
+  if (imgUrl) body.imgUrl = imgUrl;
+  await bmobRequest("POST", "/classes/" + TABLE_NAME, body);
+  showToast("选题已添加 ✿");
+}
+
+/** ③ 修改选题 */
+async function updateMemo(id, patch) {
+  await bmobRequest("PUT", "/classes/" + TABLE_NAME + "/" + id, patch);
+}
+
+/** ④ 删除选题 */
+async function deleteMemo(id) {
+  await bmobRequest("DELETE", "/classes/" + TABLE_NAME + "/" + id, null);
+}
+
+/* ============================================================================
+   3.8 渲染函数
+   ======================================================================== */
+
+function renderList() {
+  const wrap = $("memoList");
+
+  if (memoList.length === 0) {
+    wrap.innerHTML = `
+      <div class="empty">
+        <span class="emoji">🎬</span>
+        还没有选题灵感，先记录一条吧～<br/>
+        试试用 AI 生成器快速创建！
+      </div>`;
+    return;
+  }
+
+  wrap.innerHTML = memoList.map(m => {
+    const doneClass = m.isFinish ? "done" : "";
+    const checkClass = m.isFinish ? "checked" : "";
+    const timeStr = m.createdAt ? formatTime(m.createdAt) : "";
+
+    return `
+      <div class="memo-item ${doneClass}">
+        <div class="memo-head">
+          <div class="memo-check ${checkClass}"
+               onclick="toggleFinish('${m.objectId}', ${!m.isFinish})"></div>
+          <div class="memo-title">${escapeHtml(m.title)}</div>
+          <div class="memo-actions">
+            <button class="btn btn-mini btn-edit"
+                    onclick="startEdit('${m.objectId}')">编辑</button>
+            <button class="btn btn-mini btn-del"
+                    onclick="removeMemo('${m.objectId}')">删除</button>
+          </div>
+        </div>
+        ${m.content ? `<div class="memo-content">${escapeHtml(m.content)}</div>` : ""}
+        ${m.imgUrl ? `<img class="memo-img" src="${escapeHtml(m.imgUrl)}" alt="封面图" loading="lazy" />` : ""}
+        ${timeStr ? `<div class="memo-time">${timeStr}</div>` : ""}
+      </div>`;
+  }).join("");
+}
+
+/* ============================================================================
+   3.9 业务事件函数
+   ======================================================================== */
+
+/** 勾选/取消完成 */
+async function toggleFinish(id, val) {
+  showLoading(true);
+  try {
+    await updateMemo(id, { isFinish: val });
+    const m = memoList.find(x => x.objectId === id);
+    if (m) m.isFinish = val;
+    renderList();
+    showToast(val ? "已标记完成 ✓" : "已取消完成");
+  } catch (e) {
+    showToast(e.message);
+  } finally {
+    showLoading(false);
+  }
+}
+
+/** 进入编辑模式 */
+function startEdit(id) {
+  const m = memoList.find(x => x.objectId === id);
+  if (!m) return;
+  editingId = id;
+  $("titleInput").value = m.title || "";
+  $("contentInput").value = m.content || "";
+
+  // 编辑模式下回显图片
+  editingImgUrl = m.imgUrl || null;
+  selectedImgFile = null;
+  if (m.imgUrl) {
+    $("imgPreview").src = m.imgUrl;
+    $("imgPreviewWrap").style.display = "block";
+  } else {
+    $("imgPreviewWrap").style.display = "none";
+  }
+
+  $("submitBtn").textContent = "保存修改";
+  $("cancelBtn").style.display = "block";
+  $("titleInput").focus();
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+/** 退出编辑模式 */
+function exitEditMode() {
+  editingId = null;
+  $("titleInput").value = "";
+  $("contentInput").value = "";
+  $("aiInput").value = "";
+  clearImg();
+  $("submitBtn").textContent = "＋ 添加选题";
+  $("cancelBtn").style.display = "none";
+}
+
+/** 删除选题 */
+async function removeMemo(id) {
+  if (!confirm("确定删除这条选题吗？删除后不可恢复～")) return;
+  showLoading(true);
+  try {
+    await deleteMemo(id);
+    if (editingId === id) exitEditMode();
+    await fetchMemos();
+    showToast("已删除");
+  } catch (e) {
+    showToast(e.message);
+  } finally {
+    showLoading(false);
+  }
+}
+
+/* ============================================================================
+   3.10 表单提交：新增 / 保存共用
+   ======================================================================== */
+
+$("submitBtn").addEventListener("click", async () => {
+  const title   = $("titleInput").value.trim();
+  const content = $("contentInput").value.trim();
+
+  if (!title) {
+    showToast("请填写选题标题～");
+    $("titleInput").focus();
+    return;
+  }
+
+  showLoading(true);
+  try {
+    if (editingId) {
+      // ---- 编辑模式 ----
+      const patch = { title: title, content: content };
+
+      // 如果选了新图片，先上传再更新
+      if (selectedImgFile) {
+        showToast("正在上传图片...");
+        const imgUrl = await uploadImgToBmob(selectedImgFile);
+        patch.imgUrl = imgUrl;
+      } else if (!editingImgUrl) {
+        // 编辑模式下如果清除了图片
+        patch.imgUrl = "";
+      }
+
+      await updateMemo(editingId, patch);
+      showToast("修改已保存 ✿");
+      exitEditMode();
+    } else {
+      // ---- 新增模式 ----
+      let imgUrl = null;
+
+      // 如果选了图片，先上传到 Bmob 文件存储
+      if (selectedImgFile) {
+        showToast("正在上传图片...");
+        imgUrl = await uploadImgToBmob(selectedImgFile);
+      }
+
+      await createMemo(title, content, imgUrl);
+      $("titleInput").value = "";
+      $("contentInput").value = "";
+      $("aiInput").value = "";
+      clearImg();
+    }
+
+    // 重新拉取列表
+    await fetchMemos();
+  } catch (e) {
+    showToast(e.message);
+  } finally {
+    showLoading(false);
+  }
+});
+
+// 取消编辑按钮
+$("cancelBtn").addEventListener("click", exitEditMode);
+
+// 回车快捷键
+$("titleInput").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); $("contentInput").focus(); }
+});
+$("contentInput").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault(); $("submitBtn").click();
+  }
+});
+
+/* ============================================================================
+   3.11 页面初始化
+   ======================================================================== */
+
+(async function init() {
+  showLoading(true);
+  try {
+    await fetchMemos();
+  } catch (e) {
+    $("memoList").innerHTML = `
+      <div class="empty">
+        <span class="emoji">😵</span>
+        加载失败：${escapeHtml(e.message)}
+        <div style="margin-top:16px;font-size:13px;color:#b0967a;line-height:1.8;text-align:left;padding:0 10px;">
+          <b>💡 排查步骤：</b><br/>
+          1. 确认 Bmob 后台已创建 <b>Memo</b> 数据表<br/>
+          &nbsp;&nbsp;&nbsp;字段：title(String) / content(String) / isFinish(Boolean) / imgUrl(String)<br/>
+          2. 按 F12 打开浏览器控制台查看详细错误<br/>
+          3. 确认网络能访问 api.bmobcloud.com
+        </div>
+      </div>`;
+  } finally {
+    showLoading(false);
+  }
+})();
+
+</script>
+</body>
+</html>
