@@ -24,7 +24,8 @@
     content   String    脚本/灵感内容
     isFinish  Boolean   是否已发布/完成
     imgUrl    String    封面图片URL（Bmob文件存储返回的链接）
-  注意：imgUrl 字段需在 Bmob 后台手动新增，客户端不可见不要勾选。
+    username  String    创建者用户名（用于用户数据隔离）
+  注意：imgUrl 和 username 字段需在 Bmob 后台手动新增，客户端不可见不要勾选。
 
   ★★★ 部署说明 ★★★
   - 本地调试：双击 start-server.bat，通过 http://localhost:8001 访问
@@ -246,6 +247,56 @@ body {
   body { padding: 30px 16px 60px; }
   .container { padding: 34px 38px 38px; }
 }
+
+/* 17. 用户信息栏 */
+.user-bar {
+  display: flex; align-items: center; justify-content: flex-end;
+  gap: 10px; margin-bottom: 10px; font-size: 13px; color: #b0967a;
+}
+.user-bar .user-name { font-weight: 600; color: #8a6a2a; }
+.btn-logout {
+  border: none; cursor: pointer; font-family: inherit;
+  font-size: 12px; border-radius: 8px; padding: 5px 12px;
+  background: #FFE0E0; color: #c0506a; transition: background 0.2s;
+}
+.btn-logout:hover { background: #FFCECE; }
+
+/* 18. 登录弹窗 */
+.login-overlay {
+  display: none; position: fixed; inset: 0;
+  background: rgba(107, 91, 62, 0.35); z-index: 997;
+  align-items: center; justify-content: center;
+}
+.login-overlay.show { display: flex; }
+.login-box {
+  background: #FFFDF6; border-radius: 24px; padding: 28px 24px;
+  width: 90%; max-width: 360px;
+  box-shadow: 0 14px 40px rgba(180, 150, 90, 0.30);
+}
+.login-box h2 { text-align: center; font-size: 20px; color: #b8860b; margin-bottom: 6px; }
+.login-box .login-sub { text-align: center; font-size: 13px; color: #b0967a; margin-bottom: 20px; }
+.login-box input[type="text"],
+.login-box input[type="password"] {
+  width: 100%; border: none; outline: none;
+  background: #FFF6E0; border-radius: 14px;
+  padding: 12px 14px; font-size: 15px; color: #6b5b3e;
+  font-family: inherit; margin-bottom: 12px;
+  box-shadow: inset 0 0 0 1.5px rgba(180, 150, 90, 0.18);
+  transition: box-shadow 0.2s ease;
+}
+.login-box input:focus { box-shadow: inset 0 0 0 2px #f0c04a; }
+.login-tabs {
+  display: flex; gap: 8px; margin-bottom: 16px;
+}
+.login-tab {
+  flex: 1; border: none; cursor: pointer; font-family: inherit;
+  font-size: 14px; font-weight: 600; border-radius: 10px;
+  padding: 9px; transition: all 0.2s;
+}
+.login-tab.active {
+  background: linear-gradient(135deg, #ffd97a, #f0b429); color: #6b4a12;
+}
+.login-tab:not(.active) { background: #FFF1C2; color: #9a7b1f; }
 </style>
 </head>
 
@@ -255,6 +306,13 @@ body {
      二、HTML 结构区
      ===================================================================== -->
 <div class="container">
+
+  <!-- 用户信息栏（登录后显示） -->
+  <div class="user-bar" id="userBar" style="display:none;">
+    <span>👋 </span>
+    <span class="user-name" id="userName"></span>
+    <button class="btn-logout" onclick="logout()">退出</button>
+  </div>
 
   <!-- 顶部标题 -->
   <div class="header">
@@ -308,6 +366,24 @@ body {
 <!-- 轻提示 -->
 <div class="toast" id="toast"></div>
 
+<!-- 登录/注册弹窗（未登录时显示） -->
+<div class="login-overlay" id="loginOverlay">
+  <div class="login-box">
+    <h2>新媒体选题备忘录</h2>
+    <div class="login-sub">登录后即可管理你的选题灵感</div>
+    <!-- 切换登录/注册 -->
+    <div class="login-tabs">
+      <button class="login-tab active" id="tabLogin" onclick="switchTab('login')">登录</button>
+      <button class="login-tab" id="tabReg" onclick="switchTab('register')">注册</button>
+    </div>
+    <!-- 账号密码输入 -->
+    <input type="text" id="loginUser" maxlength="20" placeholder="用户名（3-20位）" />
+    <input type="password" id="loginPass" maxlength="32" placeholder="密码（6-32位）" />
+    <!-- 提交按钮 -->
+    <button class="btn btn-primary" id="loginBtn" onclick="doLogin()">登录</button>
+  </div>
+</div>
+
 <script>
 "use strict";
 
@@ -329,7 +405,118 @@ const BMOB_API_PATH = "/1";
 let BMOB_WORKING_HOST = null;
 
 /* ============================================================================
-   3.2 工具函数
+   3.2 用户认证状态
+   ★★★ Bmob 后台 Memo 表需新增 username 字段（String），用于按用户筛选数据
+   ======================================================================== */
+
+let currentUser = null;       // 当前登录用户名
+let sessionToken = null;       // Bmob 会话令牌
+
+// 从 sessionStorage 恢复登录状态（非 localStorage，仅用于会话令牌）
+function restoreSession() {
+  const saved = sessionStorage.getItem("bmob_session");
+  if (saved) {
+    try {
+      const obj = JSON.parse(saved);
+      currentUser = obj.username;
+      sessionToken = obj.sessionToken;
+    } catch (e) {}
+  }
+}
+
+function saveSession(username, token) {
+  currentUser = username;
+  sessionToken = token;
+  sessionStorage.setItem("bmob_session", JSON.stringify({
+    username: username, sessionToken: token
+  }));
+}
+
+function clearSession() {
+  currentUser = null;
+  sessionToken = null;
+  sessionStorage.removeItem("bmob_session");
+}
+
+/** 切换登录/注册标签 */
+function switchTab(mode) {
+  const isLogin = (mode === "login");
+  $("tabLogin").classList.toggle("active", isLogin);
+  $("tabReg").classList.toggle("active", !isLogin);
+  $("loginBtn").textContent = isLogin ? "登录" : "注册";
+  $("loginBtn").onclick = isLogin ? doLogin : doRegister;
+}
+
+/** 注册新用户 */
+async function doRegister() {
+  const username = $("loginUser").value.trim();
+  const password = $("loginPass").value.trim();
+
+  if (username.length < 3) { showToast("用户名至少 3 位"); return; }
+  if (password.length < 6) { showToast("密码至少 6 位"); return; }
+
+  showLoading(true);
+  try {
+    // Bmob 注册：POST /1/users
+    const data = await bmobRequest("POST", "/users", { username, password });
+    if (data.sessionToken) {
+      saveSession(username, data.sessionToken);
+      onLoginSuccess();
+      showToast("注册成功，欢迎加入 ✿");
+    }
+  } catch (e) {
+    showToast(e.message);
+  } finally {
+    showLoading(false);
+  }
+}
+
+/** 登录已有用户 */
+async function doLogin() {
+  const username = $("loginUser").value.trim();
+  const password = $("loginPass").value.trim();
+
+  if (!username || !password) { showToast("请输入用户名和密码"); return; }
+
+  showLoading(true);
+  try {
+    // Bmob 登录：GET /1/login?username=xx&password=xx
+    const data = await bmobRequest("GET",
+      "/login?username=" + encodeURIComponent(username) +
+      "&password=" + encodeURIComponent(password), null);
+    if (data.sessionToken) {
+      saveSession(data.username, data.sessionToken);
+      onLoginSuccess();
+      showToast("登录成功 ✿");
+    }
+  } catch (e) {
+    showToast(e.message);
+  } finally {
+    showLoading(false);
+  }
+}
+
+/** 登录成功后：隐藏弹窗，显示用户栏，加载数据 */
+function onLoginSuccess() {
+  $("loginOverlay").classList.remove("show");
+  $("userBar").style.display = "flex";
+  $("userName").textContent = currentUser;
+  fetchMemos();
+}
+
+/** 退出登录 */
+function logout() {
+  clearSession();
+  $("userBar").style.display = "none";
+  $("loginOverlay").classList.add("show");
+  $("loginUser").value = "";
+  $("loginPass").value = "";
+  memoList = [];
+  renderList();
+}
+
+/* ============================================================================
+   3.3 工具函数
    ======================================================================== */
 
 const $ = (id) => document.getElementById(id);
@@ -381,6 +568,10 @@ async function bmobRequest(method, path, body) {
     "X-Bmob-REST-API-Key": REST_API_KEY,
     "Content-Type": "application/json"
   };
+  // 已登录用户附带会话令牌（Bmob 要求认证请求带 X-Bmob-Session-Token）
+  if (sessionToken) {
+    headers["X-Bmob-Session-Token"] = sessionToken;
+  }
 
   const hosts = BMOB_WORKING_HOST ? [BMOB_WORKING_HOST] : BMOB_API_HOSTS;
 
@@ -440,7 +631,8 @@ async function uploadImgToBmob(file) {
         headers: {
           "X-Bmob-Application-Id": APPLICATION_ID,
           "X-Bmob-REST-API-Key": REST_API_KEY,
-          "Content-Type": file.type || "application/octet-stream"
+          "Content-Type": file.type || "application/octet-stream",
+          ...(sessionToken ? { "X-Bmob-Session-Token": sessionToken } : {})
         },
         body: file  // 直接传 File 对象（fetch 支持 Blob/File 作为 body）
       });
@@ -619,16 +811,19 @@ let editingId = null;
    3.7 数据操作函数：Bmob 数据库 CRUD
    ======================================================================== */
 
-/** ① 查询全部选题（按创建时间倒序） */
+/** ① 查询当前用户的选题（按创建时间倒序，按 username 筛选） */
 async function fetchMemos() {
-  const data = await bmobRequest("GET", "/classes/" + TABLE_NAME + "?order=-createdAt", null);
+  // Bmob where 查询：只返回当前用户的选题
+  const where = JSON.stringify({ username: currentUser });
+  const data = await bmobRequest("GET",
+    "/classes/" + TABLE_NAME + "?where=" + encodeURIComponent(where) + "&order=-createdAt", null);
   memoList = data.results || [];
   renderList();
 }
 
-/** ② 新增选题 */
+/** ② 新增选题（自动绑定当前用户名） */
 async function createMemo(title, content, imgUrl) {
-  const body = { title, content, isFinish: false };
+  const body = { title, content, isFinish: false, username: currentUser };
   if (imgUrl) body.imgUrl = imgUrl;
   await bmobRequest("POST", "/classes/" + TABLE_NAME, body);
   showToast("选题已添加 ✿");
@@ -829,29 +1024,48 @@ $("contentInput").addEventListener("keydown", (e) => {
   }
 });
 
+// 登录框回车提交
+$("loginPass").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    $("loginBtn").click();
+  }
+});
+
 /* ============================================================================
    3.11 页面初始化
    ======================================================================== */
 
 (async function init() {
-  showLoading(true);
-  try {
-    await fetchMemos();
-  } catch (e) {
-    $("memoList").innerHTML = `
-      <div class="empty">
-        <span class="emoji">😵</span>
-        加载失败：${escapeHtml(e.message)}
-        <div style="margin-top:16px;font-size:13px;color:#b0967a;line-height:1.8;text-align:left;padding:0 10px;">
-          <b>💡 排查步骤：</b><br/>
-          1. 确认 Bmob 后台已创建 <b>Memo</b> 数据表<br/>
-          &nbsp;&nbsp;&nbsp;字段：title(String) / content(String) / isFinish(Boolean) / imgUrl(String)<br/>
-          2. 按 F12 打开浏览器控制台查看详细错误<br/>
-          3. 确认网络能访问 api.bmobcloud.com
-        </div>
-      </div>`;
-  } finally {
-    showLoading(false);
+  // 恢复之前的登录状态
+  restoreSession();
+
+  if (currentUser && sessionToken) {
+    // 已登录：显示用户栏，加载数据
+    $("userBar").style.display = "flex";
+    $("userName").textContent = currentUser;
+    showLoading(true);
+    try {
+      await fetchMemos();
+    } catch (e) {
+      $("memoList").innerHTML = `
+        <div class="empty">
+          <span class="emoji">😵</span>
+          加载失败：${escapeHtml(e.message)}
+          <div style="margin-top:16px;font-size:13px;color:#b0967a;line-height:1.8;text-align:left;padding:0 10px;">
+            <b>💡 排查步骤：</b><br/>
+            1. 确认 Bmob 后台已创建 <b>Memo</b> 数据表<br/>
+            &nbsp;&nbsp;&nbsp;字段：title(String) / content(String) / isFinish(Boolean) / imgUrl(String) / username(String)<br/>
+            2. 按 F12 打开浏览器控制台查看详细错误<br/>
+            3. 确认网络能访问 api.bmobcloud.com
+          </div>
+        </div>`;
+    } finally {
+      showLoading(false);
+    }
+  } else {
+    // 未登录：显示登录弹窗
+    $("loginOverlay").classList.add("show");
   }
 })();
 
