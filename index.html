@@ -837,12 +837,15 @@ async function fetchMemos() {
   renderList();
 }
 
-/** 新增备忘 */
+/** 新增备忘（返回创建后的完整对象） */
 async function createMemo(title, content, imgUrl) {
   const body = { title, content, isFinish: false, username: currentUser };
   if (imgUrl) body.imgUrl = imgUrl;
-  await bmobRequest("POST", "/classes/" + TABLE_NAME, body);
+  const data = await bmobRequest("POST", "/classes/" + TABLE_NAME, body);
   showToast("备忘已添加 ✿");
+  // 返回新对象（Bmob POST 返回 objectId + createdAt）
+  return { objectId: data.objectId, title, content, isFinish: false,
+           imgUrl: imgUrl || null, username: currentUser, createdAt: data.createdAt };
 }
 
 /** 修改备忘 */
@@ -908,7 +911,7 @@ function renderList() {
    3.10 操作函数
    ------------------------------------------------------- */
 
-// 提交（新增或更新）
+// 提交（新增或更新）—— 本地直接更新列表，不重新请求
 async function submitMemo() {
   const title = $("titleInput").value.trim();
   const content = $("contentInput").value.trim();
@@ -921,18 +924,23 @@ async function submitMemo() {
   showLoading(true);
   try {
     if (editingId) {
-      // 编辑模式
+      // 编辑模式：更新本地列表
       const patch = { title, content };
       if (pendingImgUrl) patch.imgUrl = pendingImgUrl;
       await updateMemo(editingId, patch);
+      // 直接更新本地对象，不重新请求
+      const item = memoList.find(m => m.objectId === editingId);
+      if (item) { item.title = title; item.content = content; if (pendingImgUrl) item.imgUrl = pendingImgUrl; }
       showToast("修改成功 ✿");
       exitEditMode();
+      renderList();
     } else {
-      // 新增模式
-      await createMemo(title, content, pendingImgUrl);
+      // 新增模式：拿到返回的对象，直接插入本地列表
+      const newMemo = await createMemo(title, content, pendingImgUrl);
+      memoList.unshift(newMemo);
+      renderList();
     }
     resetForm();
-    await fetchMemos();
   } catch (e) {
     showToast("操作失败：" + e.message);
   } finally {
@@ -940,11 +948,13 @@ async function submitMemo() {
   }
 }
 
-// 切换完成状态
+// 切换完成状态 —— 本地直接更新，不重新请求
 async function toggleFinish(id, finish) {
   try {
     await updateMemo(id, { isFinish: finish });
-    await fetchMemos();
+    const item = memoList.find(m => m.objectId === id);
+    if (item) item.isFinish = finish;
+    renderList();
   } catch (e) {
     showToast("操作失败：" + e.message);
   }
@@ -987,12 +997,13 @@ function resetForm() {
   pendingImgUrl = null;
 }
 
-// 删除
+// 删除 —— 本地直接移除，不重新请求
 async function delMemo(id) {
   if (!confirm("确定删除这条备忘吗？")) return;
   try {
     await deleteMemo(id);
-    await fetchMemos();
+    memoList = memoList.filter(m => m.objectId !== id);
+    renderList();
     showToast("已删除");
     dragonSay("删掉了，轻松一点～");
   } catch (e) {
