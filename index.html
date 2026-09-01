@@ -223,7 +223,7 @@ body {
   border: 2px solid var(--border); cursor: pointer; font-family: inherit;
   font-size: 14px; font-weight: 800; border-radius: 8px;
   padding: 0 18px; white-space: nowrap;
-  background: var(--primary); color: #fff; transition: all 0.1s;
+  background: #6b4fff; color: #fff; transition: all 0.1s;
   display: flex; align-items: center; gap: 4px;
   box-shadow: 3px 3px 0 var(--shadow);
 }
@@ -246,7 +246,7 @@ body {
 .btn-upload {
   border: 2px solid var(--border); cursor: pointer; font-family: inherit;
   font-size: 18px; border-radius: 8px; padding: 5px 10px;
-  background: var(--accent); color: #fff; transition: all 0.1s; line-height: 1;
+  background: #ff8c42; color: #fff; transition: all 0.1s; line-height: 1;
   box-shadow: 2px 2px 0 var(--shadow);
 }
 .btn-upload:hover { transform: translate(-1px,-1px); box-shadow: 3px 3px 0 var(--shadow); }
@@ -262,6 +262,10 @@ body {
   box-shadow: 2px 2px 0 var(--shadow);
 }
 .tag-pick.active { background: var(--primary); color: #fff; }
+.tag-pick[data-tag="工作"].active { background: #5b8def; }
+.tag-pick[data-tag="生活"].active { background: #34c08a; }
+.tag-pick[data-tag="学习"].active { background: #b46ee0; }
+.tag-pick[data-tag="灵感"].active { background: #f0a040; }
 .tag-pick:hover { transform: translate(-1px,-1px); box-shadow: 3px 3px 0 var(--shadow); }
 .tag-pick:active { transform: translate(1px,1px); box-shadow: 1px 1px 0 var(--shadow); }
 
@@ -305,12 +309,16 @@ body {
   box-shadow: 2px 2px 0 var(--shadow);
 }
 .tag-filter-btn.active { background: var(--primary); color: #fff; }
+.tag-filter-btn[data-filter="工作"].active { background: #5b8def; }
+.tag-filter-btn[data-filter="生活"].active { background: #34c08a; }
+.tag-filter-btn[data-filter="学习"].active { background: #b46ee0; }
+.tag-filter-btn[data-filter="灵感"].active { background: #f0a040; }
 .tag-filter-btn:hover { transform: translate(-1px,-1px); box-shadow: 3px 3px 0 var(--shadow); }
 .tag-filter-btn:active { transform: translate(1px,1px); box-shadow: 1px 1px 0 var(--shadow); }
 .btn-export {
   border: 2px solid var(--border); cursor: pointer; font-family: inherit;
   font-size: 12px; font-weight: 700; border-radius: 8px; padding: 6px 14px;
-  background: var(--accent); color: #fff;
+  background: #b46ee0; color: #fff;
   transition: all 0.1s; white-space: nowrap;
   box-shadow: 2px 2px 0 var(--shadow);
 }
@@ -356,8 +364,8 @@ body {
   font-size: 12px; font-weight: 800; border-radius: 6px; padding: 5px 14px;
   transition: all 0.1s;
 }
-.btn-edit { background: var(--accent); color: #fff; box-shadow: 2px 2px 0 var(--shadow); }
-.btn-del  { background: var(--btn-del); color: var(--btn-del-t); margin-left: auto; box-shadow: 2px 2px 0 var(--shadow); }
+.btn-edit { background: #5b8def; color: #fff; box-shadow: 2px 2px 0 var(--shadow); }
+.btn-del  { background: #ff5b5b; color: #fff; margin-left: auto; box-shadow: 2px 2px 0 var(--shadow); }
 .btn-mini:hover { transform: translate(-1px,-1px); box-shadow: 3px 3px 0 var(--shadow); }
 .btn-mini:active { transform: translate(1px,1px); box-shadow: 1px 1px 0 var(--shadow); }
 
@@ -450,7 +458,7 @@ body {
   padding: 9px; transition: all 0.1s;
   box-shadow: 2px 2px 0 var(--shadow);
 }
-.login-tab.active { background: var(--primary); color: #fff; }
+.login-tab.active { background: #6b4fff; color: #fff; }
 .login-tab:not(.active) { background: var(--card); color: var(--text-l); }
 .login-tab:hover { transform: translate(-1px,-1px); box-shadow: 3px 3px 0 var(--shadow); }
 .login-tab:active { transform: translate(1px,1px); box-shadow: 1px 1px 0 var(--shadow); }
