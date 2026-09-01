@@ -164,22 +164,46 @@ body {
 .form-card textarea:focus { box-shadow: inset 0 0 0 2px var(--primary); }
 .form-card textarea { resize: none; min-height: 56px; }
 
-/* 图片上传 */
-.img-upload-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
-.img-preview {
-  width: 54px; height: 54px; border-radius: 14px; object-fit: cover;
-  border: 1.5px solid var(--border); display: none;
+/* AI 输入行：输入框 + 按钮合并一行 */
+.ai-row { display: flex; gap: 8px; margin-bottom: 10px; }
+.ai-row input[type="text"] { margin-bottom: 0; flex: 1; }
+.btn-ai {
+  border: none; cursor: pointer; font-family: inherit;
+  font-size: 14px; font-weight: 600; border-radius: 14px;
+  padding: 0 18px; white-space: nowrap;
+  background: linear-gradient(135deg, var(--accent), var(--primary-l));
+  color: var(--text); transition: all 0.2s;
+  display: flex; align-items: center; gap: 4px;
 }
+.btn-ai:hover { transform: translateY(-1px); box-shadow: 0 4px 12px var(--shadow); }
+.btn-ai:active { transform: translateY(0); }
+.btn-ai span { font-size: 13px; }
+
+/* 底部行：标签 + 图片上传 */
+.form-bottom-row {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
+}
+.form-bottom-row .tag-row { flex: 1; margin-bottom: 0; }
+
+/* 图片上传（紧凑版） */
+.img-upload-mini { position: relative; flex-shrink: 0; }
+.img-upload-mini .img-preview {
+  width: 36px; height: 36px; border-radius: 10px; object-fit: cover;
+  border: 1.5px solid var(--border); display: none; position: absolute;
+  right: 44px; top: 0; z-index: 1;
+}
+.img-upload-mini .img-preview.show { display: block; }
 .btn-upload {
   border: none; cursor: pointer; font-family: inherit;
-  font-size: 13px; border-radius: 12px; padding: 8px 14px;
+  font-size: 18px; border-radius: 10px; padding: 7px 10px;
   background: var(--accent); color: var(--text); transition: opacity 0.2s;
+  line-height: 1;
 }
 .btn-upload:hover { opacity: 0.85; }
 #fileInput { display: none; }
 
 /* 标签选择 */
-.tag-row { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
+.tag-row { display: flex; gap: 6px; flex-wrap: wrap; }
 .tag-pick {
   border: 1.5px solid var(--border); background: var(--card);
   border-radius: 10px; padding: 5px 12px; font-size: 13px;
@@ -200,11 +224,6 @@ body {
 }
 .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 6px 16px var(--shadow); }
 .btn-primary:active { transform: translateY(0); }
-.btn-ai {
-  background: var(--accent); color: var(--text);
-  font-size: 14px; padding: 10px 16px; border-radius: 12px;
-  margin-bottom: 10px; width: 100%;
-}
 
 /* 编辑模式 */
 .edit-bar { display: none; align-items: center; justify-content: space-between; margin-bottom: 8px; }
@@ -269,15 +288,16 @@ body {
 .tag-badge[data-tag="学习"] { background: #b46ee0; }
 .tag-badge[data-tag="灵感"] { background: #f0a040; }
 
-.memo-actions { display: flex; gap: 8px; margin-top: 8px; }
+.memo-actions { display: flex; gap: 6px; margin-top: 8px; }
 .btn-mini {
   border: none; cursor: pointer; font-family: inherit;
-  font-size: 12px; border-radius: 8px; padding: 5px 12px;
-  transition: opacity 0.2s;
+  font-size: 12px; font-weight: 600; border-radius: 8px; padding: 6px 14px;
+  transition: all 0.2s;
 }
 .btn-edit { background: var(--accent); color: var(--text); }
-.btn-del  { background: var(--btn-del); color: var(--btn-del-t); }
-.btn-mini:hover { opacity: 0.8; }
+.btn-del  { background: var(--btn-del); color: var(--btn-del-t); margin-left: auto; }
+.btn-mini:hover { opacity: 0.8; transform: translateY(-1px); }
+.btn-mini:active { transform: translateY(0); }
 
 /* 空状态 */
 .empty { text-align: center; padding: 36px 16px; color: var(--text-l); }
@@ -375,7 +395,7 @@ body {
   .container { padding: 18px 14px 22px; border-radius: 22px; }
   .header h1 { font-size: 20px; }
   .memo-title { font-size: 15px; }
-  .btn-mini { padding: 6px 9px; font-size: 12px; }
+  .btn-mini { padding: 6px 12px; font-size: 12px; }
   .stat-num { font-size: 18px; }
 }
 @media (min-width: 768px) {
@@ -444,27 +464,28 @@ body {
     </div>
 
     <!-- AI 生成备忘 -->
-    <button class="btn-ai" onclick="generateAIMemo()">✨ AI 帮我生成备忘内容</button>
-    <input type="text" id="aiInput" placeholder="输入想法（如：明天要做的事）让AI帮你生成" style="margin-bottom:10px;" autocomplete="new-password" />
+    <div class="ai-row">
+      <input type="text" id="aiInput" placeholder="输入想法，AI 帮你生成备忘…" autocomplete="new-password" />
+      <button class="btn-ai" onclick="generateAIMemo()">✨<span>生成</span></button>
+    </div>
 
     <!-- 标题/内容输入 -->
     <input type="text" id="titleInput" maxlength="50" placeholder="备忘标题（如：拿快递）" autocomplete="new-password" />
     <textarea id="contentInput" maxlength="500" placeholder="备注内容（选填，可换行）" autocomplete="new-password"></textarea>
 
-    <!-- 标签选择 -->
-    <div class="tag-row" id="tagPicker">
-      <span style="font-size:13px;color:var(--text-l);align-self:center;margin-right:4px;">标签</span>
-      <button class="tag-pick" data-tag="工作" onclick="pickTag('工作')">工作</button>
-      <button class="tag-pick" data-tag="生活" onclick="pickTag('生活')">生活</button>
-      <button class="tag-pick" data-tag="学习" onclick="pickTag('学习')">学习</button>
-      <button class="tag-pick" data-tag="灵感" onclick="pickTag('灵感')">灵感</button>
-    </div>
-
-    <!-- 图片上传 -->
-    <div class="img-upload-row">
-      <img class="img-preview" id="imgPreview" alt="预览" />
-      <button class="btn-upload" onclick="$('fileInput').click()">📷 上传图片</button>
-      <input type="file" id="fileInput" accept="image/*" />
+    <!-- 标签 + 图片上传 合并一行 -->
+    <div class="form-bottom-row">
+      <div class="tag-row" id="tagPicker">
+        <button class="tag-pick" data-tag="工作" onclick="pickTag('工作')">工作</button>
+        <button class="tag-pick" data-tag="生活" onclick="pickTag('生活')">生活</button>
+        <button class="tag-pick" data-tag="学习" onclick="pickTag('学习')">学习</button>
+        <button class="tag-pick" data-tag="灵感" onclick="pickTag('灵感')">灵感</button>
+      </div>
+      <div class="img-upload-mini">
+        <img class="img-preview" id="imgPreview" alt="预览" />
+        <button class="btn-upload" onclick="$('fileInput').click()">📷</button>
+        <input type="file" id="fileInput" accept="image/*" />
+      </div>
     </div>
 
     <!-- 提交按钮 -->
@@ -1256,7 +1277,7 @@ function startEdit(id) {
   });
   if (m.imgUrl) {
     $("imgPreview").src = m.imgUrl;
-    $("imgPreview").style.display = "block";
+    $("imgPreview").classList.add("show");
   }
   $("titleInput").focus();
   window.scrollTo({ top: 0, behavior: "smooth" });
@@ -1275,7 +1296,7 @@ function resetForm() {
   $("titleInput").value = "";
   $("contentInput").value = "";
   $("aiInput").value = "";
-  $("imgPreview").style.display = "none";
+  $("imgPreview").classList.remove("show");
   $("imgPreview").src = "";
   $("fileInput").value = "";
   pendingImgUrl = null;
@@ -1343,7 +1364,7 @@ $("fileInput").addEventListener("change", async (e) => {
   const reader = new FileReader();
   reader.onload = (ev) => {
     $("imgPreview").src = ev.target.result;
-    $("imgPreview").style.display = "block";
+    $("imgPreview").classList.add("show");
   };
   reader.readAsDataURL(file);
 
@@ -1354,7 +1375,7 @@ $("fileInput").addEventListener("change", async (e) => {
     showToast("图片上传成功 ✿");
   } catch (err) {
     showToast("图片上传失败：" + err.message);
-    $("imgPreview").style.display = "none";
+    $("imgPreview").classList.remove("show");
   } finally {
     showLoading(false);
   }
