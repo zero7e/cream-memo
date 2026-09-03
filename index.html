@@ -597,7 +597,7 @@ body {
   <div class="toolbar" id="toolbar" style="display:none;">
     <div class="search-bar">
       <span class="search-icon">🔍</span>
-      <input id="searchInput" type="text" placeholder="搜索标题或内容，云端实时匹配..." autocomplete="off" oninput="onSearchInput()" onkeydown="if(event.key==='Enter'){clearTimeout(searchTimer);doSearch();}">
+      <input id="searchInput" type="text" placeholder="搜索标题或内容，即时过滤..." autocomplete="off" oninput="applySearch()">
       <button id="searchClear" class="search-clear" onclick="clearSearch()" style="display:none;" title="清空搜索">✕</button>
     </div>
     <div class="tag-filter">
@@ -771,7 +771,6 @@ function logout() {
     $("searchInput").value = "";
     $("searchClear").style.display = "none";
   }
-  clearTimeout(searchTimer);
   memoList = [];
   renderList();
 }
@@ -1207,59 +1206,59 @@ function filterTag(tag) {
    3.8 数据操作
    ------------------------------------------------------- */
 
-/** 查询当前用户的备忘（keyword = 搜索词，支持模糊过滤） */
-async function fetchMemos(keyword) {
-  // 云端查询：username 隔离数据 + createdAt 倒序
-  // （注：实测 Bmob 新版后端 $regex 对任何数据都不生效、$options 报 400、BQL 端点不存在，
-  //   因此模糊匹配在云端返回的当前用户数据集上执行，数据隔离仍在云端完成）
+/** 查询当前用户的备忘（云端负责数据隔离 + 排序；搜索为本地即时过滤，不走网络） */
+async function fetchMemos() {
   const where = JSON.stringify({ username: currentUser });
   const data = await bmobRequest("GET",
     "/classes/" + TABLE_NAME + "?where=" + encodeURIComponent(where) + "&order=-createdAt", null);
-  let results = data.results || [];
-  const kw = (keyword || "").trim().toLowerCase();
-  if (kw) {
-    results = results.filter(m =>
-      (m.title || "").toLowerCase().includes(kw) ||
-      (m.content || "").toLowerCase().includes(kw)
-    );
-  }
-  memoList = results;
+  memoList = data.results || [];
   renderList();
 }
 
 /* -------------------------------------------------------
-   3.7b 云端搜索（防抖 350ms，实时匹配）
+   3.7b 本地即时搜索（零请求、零闪烁、零延迟）
    ------------------------------------------------------- */
 
-let searchTimer = null;
-
-/** 输入框实时监听（带防抖，停止输入 350ms 后才发起云端查询） */
-function onSearchInput() {
-  const kw = $("searchInput").value;
+/**
+ * 搜索过滤：直接切换已有 DOM 节点的显示状态
+ * 不重新拉数据、不重建列表 → 图片不重载、页面不闪烁
+ */
+function applySearch() {
+  const si = $("searchInput");
+  if (!si) return;
+  const kw = si.value.trim().toLowerCase();
   $("searchClear").style.display = kw ? "flex" : "none";
-  clearTimeout(searchTimer);
-  searchTimer = setTimeout(doSearch, 350);
-}
 
-/** 执行云端搜索 */
-async function doSearch() {
-  const kw = $("searchInput").value.trim();
-  showLoading(true);
-  try {
-    await fetchMemos(kw);
-  } catch (e) {
-    showToast("搜索失败：" + e.message);
-  } finally {
-    showLoading(false);
+  let visible = 0;
+  document.querySelectorAll("#memoList .memo-item").forEach(el => {
+    const m = memoList.find(x => x.objectId === el.getAttribute("data-id"));
+    const hit = !kw || !m ||
+      (m.title || "").toLowerCase().includes(kw) ||
+      (m.content || "").toLowerCase().includes(kw);
+    el.style.display = hit ? "" : "none";
+    if (hit) visible++;
+  });
+
+  // 有卡片但全部被过滤 → 显示"未找到"提示（不覆盖原有节点）
+  let hint = $("searchEmptyHint");
+  if (document.querySelectorAll("#memoList .memo-item").length > 0 && visible === 0) {
+    if (!hint) {
+      hint = document.createElement("div");
+      hint.id = "searchEmptyHint";
+      hint.className = "empty";
+      $("memoList").appendChild(hint);
+    }
+    hint.innerHTML = `<span class="emoji">🔍</span>没有找到与「${escapeHtml(si.value.trim())}」相关的备忘<br/>
+      <span style="font-size:12px;">换个关键词试试，或点击 ✕ 清空搜索</span>`;
+  } else if (hint) {
+    hint.remove();
   }
 }
 
 /** 清空搜索，恢复完整列表 */
 function clearSearch() {
   $("searchInput").value = "";
-  $("searchClear").style.display = "none";
-  clearTimeout(searchTimer);
-  doSearch();
+  applySearch();
 }
 
 /** 新增备忘（返回完整对象） */
@@ -1304,24 +1303,19 @@ function renderList() {
   updateStats();
   const wrap = $("memoList");
 
-  // 搜索是否激活（激活时空状态显示"未找到"，且不触发庆祝弹窗）
+  // 搜索是否激活（激活中不触发庆祝弹窗，避免误判）
   const searching = !!($("searchInput") && $("searchInput").value.trim());
 
-  // 按标签筛选
+  // 按标签筛选（搜索过滤由 applySearch 在渲染后以显隐方式叠加）
   const filtered = (activeFilter === "all")
     ? memoList
     : memoList.filter(m => m.tag === activeFilter);
 
   if (filtered.length === 0) {
-    const kw = searching ? $("searchInput").value.trim() : "";
     wrap.innerHTML = `
       <div class="empty">
-        <span class="emoji">${searching ? '🔍' : '📝'}</span>
-        ${searching
-          ? `没有找到与「${escapeHtml(kw)}」相关的备忘<br/><span style="font-size:12px;">换个关键词试试，或点击 ✕ 清空搜索</span>`
-          : memoList.length === 0
-            ? '还没有备忘，先记一条吧～<br/>试试 AI 帮你生成！'
-            : '该标签下没有备忘～'}
+        <span class="emoji">📝</span>
+        ${memoList.length === 0 ? '还没有备忘，先记一条吧～<br/>试试 AI 帮你生成！' : '该标签下没有备忘～'}
       </div>`;
     return;
   }
@@ -1353,6 +1347,9 @@ function renderList() {
       </div>
     </div>
   `).join("");
+
+  // 渲染后叠加当前搜索过滤（新增/编辑/删除/切标签后保持搜索状态）
+  applySearch();
 }
 
 /* -------------------------------------------------------
