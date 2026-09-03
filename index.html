@@ -1207,22 +1207,23 @@ function filterTag(tag) {
    3.8 数据操作
    ------------------------------------------------------- */
 
-/** 查询当前用户的备忘（支持云端模糊搜索） */
+/** 查询当前用户的备忘（keyword = 搜索词，支持模糊过滤） */
 async function fetchMemos(keyword) {
-  const where = { username: currentUser };
-  const kw = (keyword || "").trim();
-  if (kw) {
-    // 转义正则特殊字符，防止用户输入 ( [ * 等符号导致查询报错
-    const safe = kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    // 云端模糊匹配：标题 OR 内容 含关键词（$options: i 忽略英文大小写）
-    where["$or"] = [
-      { title:   { $regex: safe, $options: "i" } },
-      { content: { $regex: safe, $options: "i" } }
-    ];
-  }
+  // 云端查询：username 隔离数据 + createdAt 倒序
+  // （注：实测 Bmob 新版后端 $regex 对任何数据都不生效、$options 报 400、BQL 端点不存在，
+  //   因此模糊匹配在云端返回的当前用户数据集上执行，数据隔离仍在云端完成）
+  const where = JSON.stringify({ username: currentUser });
   const data = await bmobRequest("GET",
-    "/classes/" + TABLE_NAME + "?where=" + encodeURIComponent(JSON.stringify(where)) + "&order=-createdAt", null);
-  memoList = data.results || [];
+    "/classes/" + TABLE_NAME + "?where=" + encodeURIComponent(where) + "&order=-createdAt", null);
+  let results = data.results || [];
+  const kw = (keyword || "").trim().toLowerCase();
+  if (kw) {
+    results = results.filter(m =>
+      (m.title || "").toLowerCase().includes(kw) ||
+      (m.content || "").toLowerCase().includes(kw)
+    );
+  }
+  memoList = results;
   renderList();
 }
 
