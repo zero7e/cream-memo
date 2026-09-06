@@ -235,23 +235,52 @@ body {
 .form-bottom-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
 .form-bottom-row .tag-row { flex: 1; margin-bottom: 0; }
 
-/* 图片上传 */
+/* 图片上传按钮 */
 .img-upload-mini { position: relative; flex-shrink: 0; }
-.img-upload-mini .img-preview {
-  width: 36px; height: 36px; border-radius: 8px; object-fit: cover;
-  border: 2px solid var(--border); display: none; position: absolute;
-  right: 44px; top: 0; z-index: 1;
-}
-.img-upload-mini .img-preview.show { display: block; }
 .btn-upload {
   border: 2px solid var(--border); cursor: pointer; font-family: inherit;
-  font-size: 18px; border-radius: 8px; padding: 5px 10px;
+  font-size: 16px; border-radius: 8px; padding: 7px 14px;
   background: #ff8c42; color: #fff; transition: all 0.1s; line-height: 1;
-  box-shadow: 2px 2px 0 var(--shadow);
+  box-shadow: 2px 2px 0 var(--shadow); font-weight: 700;
 }
+.btn-upload span { font-size: 13px; margin-left: 3px; }
 .btn-upload:hover { transform: translate(-1px,-1px); box-shadow: 3px 3px 0 var(--shadow); }
 .btn-upload:active { transform: translate(1px,1px); box-shadow: 1px 1px 0 var(--shadow); }
 #fileInput { display: none; }
+
+/* 图片大图预览区（上传后/编辑备忘时显示） */
+.img-preview-wrap {
+  display: none; position: relative; margin: 2px 0 10px;
+  border: 2px solid var(--border); border-radius: 12px; overflow: hidden;
+  background: #fff; box-shadow: 3px 3px 0 var(--shadow);
+}
+.img-preview-wrap.show { display: block; }
+.img-preview-wrap img {
+  display: block; width: 100%; max-height: 280px; object-fit: contain;
+  background: #fff; cursor: zoom-in;
+}
+.img-remove {
+  position: absolute; top: 8px; right: 8px;
+  width: 32px; height: 32px; border-radius: 50%;
+  border: 2px solid var(--border); background: #ff5b5b; color: #fff;
+  font-size: 14px; font-weight: 700; cursor: pointer; font-family: inherit;
+  box-shadow: 2px 2px 0 var(--shadow); line-height: 1; padding: 0;
+}
+.img-remove:hover { transform: translate(-1px,-1px); box-shadow: 3px 3px 0 var(--shadow); }
+.img-remove:active { transform: translate(1px,1px); box-shadow: 1px 1px 0 var(--shadow); }
+
+/* 图片灯箱（点击图片全屏放大） */
+.lightbox {
+  display: none; position: fixed; inset: 0; z-index: 9999;
+  background: rgba(0,0,0,.88); align-items: center; justify-content: center;
+  padding: 18px; cursor: zoom-out;
+}
+.lightbox.show { display: flex; }
+.lightbox img {
+  max-width: 95%; max-height: 92%; border-radius: 12px;
+  border: 3px solid #fff; box-shadow: 0 10px 50px rgba(0,0,0,.6);
+  object-fit: contain;
+}
 
 /* 标签选择 */
 .tag-row { display: flex; gap: 6px; flex-wrap: wrap; }
@@ -583,10 +612,15 @@ body {
         <button class="tag-pick" data-tag="灵感" onclick="pickTag('灵感')">灵感</button>
       </div>
       <div class="img-upload-mini">
-        <img class="img-preview" id="imgPreview" alt="预览" />
-        <button class="btn-upload" onclick="$('fileInput').click()">📷</button>
+        <button type="button" class="btn-upload" onclick="$('fileInput').click()">📷<span>传图</span></button>
         <input type="file" id="fileInput" accept="image/*" />
       </div>
+    </div>
+
+    <!-- 图片大图预览（选图后/编辑备忘时显示，点击图片可全屏放大，✕ 可移除） -->
+    <div class="img-preview-wrap" id="imgPreviewWrap">
+      <img id="imgPreview" alt="备忘图片预览" onclick="openLightbox(this.src)" />
+      <button type="button" class="img-remove" title="移除这张图片" onclick="removeCurrentImg()">✕</button>
     </div>
 
     <!-- 提交按钮 -->
@@ -628,6 +662,11 @@ body {
     <p id="celebrateMsg">太厉害了，所有备忘都完成了～</p>
     <button class="btn btn-primary" onclick="closeCelebrate()">好耶！</button>
   </div>
+</div>
+
+<!-- 图片灯箱：点击任意图片全屏放大，再点任意处或按 ESC 关闭 -->
+<div class="lightbox" id="lightbox" onclick="closeLightbox()">
+  <img id="lightboxImg" alt="图片大图" />
 </div>
 
 <!-- 登录弹窗 -->
@@ -926,11 +965,11 @@ function compressImageToDataURL(file) {
         ctx.fillStyle = "#ffffff";   // JPEG 不支持透明，白底兜底
         ctx.fillRect(0, 0, w, h);
         ctx.drawImage(img, 0, 0, w, h);
-        // 逐级降质，直到体积达标
+        // 逐级降质，直到体积达标（dataURL 字符数 ≤ 约 380KB，控制列表加载体积）
         let result = "";
-        for (const q of [0.75, 0.6, 0.5, 0.4]) {
+        for (const q of [0.75, 0.6, 0.5, 0.4, 0.3]) {
           result = canvas.toDataURL("image/jpeg", q);
-          if (result.length <= 520 * 1024) break;
+          if (result.length <= 380 * 1024) break;
         }
         resolve(result);
       };
@@ -1442,7 +1481,7 @@ function renderList() {
         <div class="memo-content">
           <div class="memo-title">${escapeHtml(m.title)}</div>
           ${m.content ? `<div class="memo-desc">${escapeHtml(m.content)}</div>` : ''}
-          ${m.imgUrl ? `<img class="memo-img" src="${escapeHtml(m.imgUrl)}" alt="图片" loading="lazy" />` : ''}
+          ${m.imgUrl ? `<img class="memo-img" src="${escapeHtml(m.imgUrl)}" alt="图片" loading="lazy" title="点击放大查看" onclick="openLightbox(this.src)" />` : ''}
         </div>
       </div>
       <div class="memo-meta">
@@ -1557,10 +1596,10 @@ async function startEdit(id) {
   document.querySelectorAll("#tagPicker .tag-pick").forEach(b => {
     b.classList.toggle("active", b.getAttribute("data-tag") === selectedTag);
   });
-  if (m.imgUrl) {
-    $("imgPreview").src = m.imgUrl;
-    $("imgPreview").classList.add("show");
-  }
+  // 编辑时若该备忘已有图片，显示大图预览（点击可放大，✕ 可移除）
+  $("imgPreviewWrap").classList.toggle("show", !!m.imgUrl);
+  if (m.imgUrl) $("imgPreview").src = m.imgUrl;
+  else $("imgPreview").src = "";
   // 同步本地缓存（云端数据为准）
   const local = memoList.find(x => x.objectId === id);
   if (local) Object.assign(local, m);
@@ -1581,7 +1620,7 @@ function resetForm() {
   $("titleInput").value = "";
   $("contentInput").value = "";
   $("aiInput").value = "";
-  $("imgPreview").classList.remove("show");
+  $("imgPreviewWrap").classList.remove("show");
   $("imgPreview").src = "";
   $("fileInput").value = "";
   pendingImgUrl = null;
@@ -1642,34 +1681,124 @@ function closeCelebrate() {
    3.13 图片上传处理
    ------------------------------------------------------- */
 
+/*
+ * 图片选择 → 上传 → 【立即写入备忘录】
+ * ─────────────────────────────────────────────
+ * 关键设计：图片不再"暂存表单等提交"，而是选完图就立刻保存到云端，
+ * 彻底避免"图片停在页面上、一刷新就丢"的问题：
+ *   · 编辑模式：图片即时更新到当前这条备忘（PATCH imgUrl）
+ *   · 新建模式：立即创建一条带图备忘（没填标题就自动用"📷 图片备忘 时间"），
+ *               已填的标题/内容/标签会一并带上，之后可点「编辑」补充文字
+ */
 $("fileInput").addEventListener("change", async (e) => {
   const file = e.target.files[0];
+  e.target.value = "";   // 清空，允许重复选择同一个文件
   if (!file) return;
+  if (!file.type || !file.type.startsWith("image/")) { showToast("请选择图片文件"); return; }
   if (file.size > 5 * 1024 * 1024) { showToast("图片不能超过 5MB"); return; }
 
+  // 1) 先把本地原图显示到大预览区（即时反馈，不用等上传）
   const reader = new FileReader();
   reader.onload = (ev) => {
     $("imgPreview").src = ev.target.result;
-    $("imgPreview").classList.add("show");
+    $("imgPreviewWrap").classList.add("show");
   };
   reader.readAsDataURL(file);
 
   showLoading(true);
   try {
+    // 2) 上传到 Bmob 文件服务；文件服务未开通时自动降级为压缩 dataURL
     const result = await uploadImgToBmob(file);
-    pendingImgUrl = result.url;
-    if (result.fallback) {
-      showToast("已压缩并保存到备忘 ✿（如需云端文件服务，可到 Bmob 后台绑定文件域名）");
+
+    if (editingId) {
+      // 3a) 编辑模式：图片立即写入当前备忘，刷新也不会丢
+      await updateMemo(editingId, { imgUrl: result.url });
+      const item = memoList.find(m => m.objectId === editingId);
+      if (item) item.imgUrl = result.url;
+      pendingImgUrl = result.url;
+      $("imgPreview").src = result.url;
+      renderList();
+      showToast(result.fallback ? "图片已压缩并插入备忘 ✿" : "图片已插入备忘 ✿");
     } else {
-      showToast("图片上传成功 ✿");
+      // 3b) 新建模式：直接创建一条带图备忘，保证图片马上进入备忘录
+      let title = $("titleInput").value.trim();
+      const content = $("contentInput").value.trim();
+      if (!title) {
+        const d = new Date();
+        const pad = n => String(n).padStart(2, "0");
+        title = "📷 图片备忘 " + pad(d.getMonth() + 1) + "-" + pad(d.getDate())
+                + " " + pad(d.getHours()) + ":" + pad(d.getMinutes());
+      }
+      const newMemo = await createMemo(title, content, result.url, selectedTag);
+      memoList.unshift(newMemo);
+      renderList();
+      resetForm();
+      showToast(result.fallback
+        ? "图片已压缩保存到新备忘 ✿ 点「编辑」可补充文字"
+        : "图片已保存到新备忘 ✿ 点「编辑」可补充文字");
     }
   } catch (err) {
-    showToast("图片上传失败：" + err.message);
-    $("imgPreview").classList.remove("show");
-    pendingImgUrl = null;
+    handleNoAccess(err, editingId);
+    showToast("图片保存失败：" + err.message);
+    // 失败后把预览区恢复到操作前的状态（编辑模式保留旧图）
+    if (editingId) {
+      const cur = memoList.find(m => m.objectId === editingId);
+      if (cur && cur.imgUrl) { $("imgPreview").src = cur.imgUrl; }
+      else { $("imgPreviewWrap").classList.remove("show"); $("imgPreview").src = ""; }
+    } else {
+      $("imgPreviewWrap").classList.remove("show");
+      $("imgPreview").src = "";
+    }
   } finally {
     showLoading(false);
   }
+});
+
+/*
+ * 移除当前备忘的图片
+ *   · 编辑模式：立即从云端备忘中移除（PATCH imgUrl 为空），刷新后同样生效
+ *   · 新建暂态：仅清空本地预览
+ */
+async function removeCurrentImg() {
+  if (!editingId) {
+    pendingImgUrl = null;
+    $("imgPreviewWrap").classList.remove("show");
+    $("imgPreview").src = "";
+    return;
+  }
+  showLoading(true);
+  try {
+    await updateMemo(editingId, { imgUrl: "" });
+    const item = memoList.find(m => m.objectId === editingId);
+    if (item) item.imgUrl = "";
+    pendingImgUrl = null;
+    $("imgPreviewWrap").classList.remove("show");
+    $("imgPreview").src = "";
+    renderList();
+    showToast("图片已移除 ✿");
+  } catch (err) {
+    handleNoAccess(err, editingId);
+    showToast("图片移除失败：" + err.message);
+  } finally {
+    showLoading(false);
+  }
+}
+
+/* -------------------------------------------------------
+   3.14 图片灯箱（点击图片全屏放大查看）
+   ------------------------------------------------------- */
+function openLightbox(src) {
+  if (!src) return;
+  $("lightboxImg").src = src;
+  $("lightbox").classList.add("show");
+}
+function closeLightbox() {
+  $("lightbox").classList.remove("show");
+  $("lightboxImg").src = "";
+}
+// ESC 键关闭灯箱
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") closeLightbox();
 });
 
 /* -------------------------------------------------------
