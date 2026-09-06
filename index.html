@@ -1261,6 +1261,26 @@ function clearSearch() {
   applySearch();
 }
 
+/**
+ * 按 ID 查询单条笔记（云端归属校验）
+ * ① 异常捕获：网络/服务错误不崩溃，返回 null
+ * ② 归属校验：where 同时要求 objectId + username，他人/无权限笔记查不到
+ * ③ 空判断：笔记不存在/已被删除 → 返回 null，由调用方给出友好提示
+ */
+async function getMemoById(id) {
+  if (!id) return null;
+  try {
+    const where = JSON.stringify({ objectId: id, username: currentUser });
+    const data = await bmobRequest("GET",
+      "/classes/" + TABLE_NAME + "?where=" + encodeURIComponent(where) + "&limit=1", null);
+    const results = (data && data.results) || [];
+    return results.length > 0 ? results[0] : null;
+  } catch (e) {
+    console.warn("getMemoById 查询失败：", e.message);
+    return null;
+  }
+}
+
 /** 新增备忘（返回完整对象） */
 async function createMemo(title, content, imgUrl, tag) {
   const body = { title, content, isFinish: false, username: currentUser };
@@ -1272,14 +1292,39 @@ async function createMemo(title, content, imgUrl, tag) {
            imgUrl: imgUrl || null, username: currentUser, tag: tag || null, createdAt: data.createdAt };
 }
 
-/** 修改备忘 */
+/** 修改备忘（先校验归属：不存在/已删除/无权访问 → 抛 NOTE_NO_ACCESS） */
 async function updateMemo(id, patch) {
-  await bmobRequest("PUT", "/classes/" + TABLE_NAME + "/" + id, patch);
+  const owned = await getMemoById(id);
+  if (!owned) throw makeNoAccessError();
+  return await bmobRequest("PUT", "/classes/" + TABLE_NAME + "/" + id, patch);
 }
 
-/** 删除备忘 */
+/** 删除备忘（先校验归属：不存在/已删除/无权访问 → 抛 NOTE_NO_ACCESS） */
 async function deleteMemo(id) {
-  await bmobRequest("DELETE", "/classes/" + TABLE_NAME + "/" + id, null);
+  const owned = await getMemoById(id);
+  if (!owned) throw makeNoAccessError();
+  return await bmobRequest("DELETE", "/classes/" + TABLE_NAME + "/" + id, null);
+}
+
+/** 构造"无权限/不存在"错误（附带错误码，供调用方区分处理） */
+function makeNoAccessError() {
+  const err = new Error("笔记不存在、已被删除或无权访问");
+  err.code = "NOTE_NO_ACCESS";
+  return err;
+}
+
+/**
+ * 统一处理"无权限/笔记已删除"：
+ * 移除本地残留卡片、退出编辑模式，避免界面和云端数据不一致
+ */
+function handleNoAccess(e, id) {
+  if (e && e.code === "NOTE_NO_ACCESS") {
+    memoList = memoList.filter(x => x.objectId !== id);
+    if (editingId === id) exitEditMode();
+    renderList();
+    return true;
+  }
+  return false;
 }
 
 /* -------------------------------------------------------
@@ -1400,6 +1445,7 @@ async function submitMemo() {
     }
     resetForm();
   } catch (e) {
+    handleNoAccess(e, editingId);
     showToast("操作失败：" + e.message);
   } finally {
     showLoading(false);
@@ -1419,14 +1465,25 @@ async function toggleFinish(id, finish, checkEl) {
     }
     renderList();
   } catch (e) {
+    handleNoAccess(e, id);
     showToast("操作失败：" + e.message);
   }
 }
 
-// 进入编辑模式
-function startEdit(id) {
-  const m = memoList.find(x => x.objectId === id);
-  if (!m) return;
+// 进入编辑模式（先向云端确认笔记仍存在且属于本人）
+async function startEdit(id) {
+  showLoading(true);
+  const m = await getMemoById(id);
+  showLoading(false);
+
+  // 空判断：笔记不存在/已被删除/无权访问 → 友好提示 + 清理本地残留卡片
+  if (!m) {
+    showToast("该笔记不存在、已被删除或无权访问");
+    memoList = memoList.filter(x => x.objectId !== id);
+    renderList();
+    return;
+  }
+
   editingId = id;
   $("titleInput").value = m.title || "";
   $("contentInput").value = m.content || "";
@@ -1442,6 +1499,9 @@ function startEdit(id) {
     $("imgPreview").src = m.imgUrl;
     $("imgPreview").classList.add("show");
   }
+  // 同步本地缓存（云端数据为准）
+  const local = memoList.find(x => x.objectId === id);
+  if (local) Object.assign(local, m);
   $("titleInput").focus();
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
@@ -1476,6 +1536,7 @@ async function delMemo(id) {
     renderList();
     showToast("已删除");
   } catch (e) {
+    handleNoAccess(e, id);
     showToast("删除失败：" + e.message);
   }
 }
