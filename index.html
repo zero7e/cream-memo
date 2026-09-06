@@ -850,12 +850,22 @@ async function bmobRequest(method, path, body) {
   }
 }
 
+/**
+ * 上传图片到 Bmob 文件服务
+ * 新版 Bmob 文件接口为 POST /2/files/<文件名> + 原始二进制（旧的 /1/files/ 已废弃）
+ * 若文件服务不可用（后台未绑定文件域名/接口不通），自动降级为压缩后的 dataURL 内嵌存储，
+ * 保证任何环境下图片都能随备忘保存与展示。
+ * 返回 { url, fallback }：fallback=true 表示走的内置压缩存储
+ */
 async function uploadImgToBmob(file) {
   const fileName = "memo_" + Date.now() + "_" + file.name;
   const hosts = BMOB_WORKING_HOST ? [BMOB_WORKING_HOST] : BMOB_API_HOSTS;
+  let lastErr = null;
+
   for (let i = 0; i < hosts.length; i++) {
     const host = hosts[i];
-    const url = host + BMOB_API_PATH + "/files/" + encodeURIComponent(fileName);
+    // 注意：文件服务走 /2/files，数据接口走 /1/classes
+    const url = host + "/2/files/" + encodeURIComponent(fileName);
     try {
       const resp = await fetch(url, {
         method: "POST",
@@ -870,14 +880,66 @@ async function uploadImgToBmob(file) {
       let data = null;
       const text = await resp.text();
       if (text) { try { data = JSON.parse(text); } catch (e) {} }
-      if (resp.ok && data && data.url) { BMOB_WORKING_HOST = host; return data.url; }
-      if (i < hosts.length - 1) continue;
-      throw new Error(data && data.error ? data.error : "上传失败");
+      if (resp.ok && data && data.url) {
+        BMOB_WORKING_HOST = host;
+        return { url: data.url, fallback: false };
+      }
+      lastErr = new Error(data && (data.error || data.message) ? (data.error || data.message) : "上传失败 HTTP " + resp.status);
+      // 「未绑定文件域名」是应用级配置错误，换域名重试也无意义 → 直接降级
+      const msg = lastErr.message || "";
+      if (msg.includes("域名") || msg.includes("文件服务")) break;
     } catch (err) {
-      if (i < hosts.length - 1) continue;
-      throw err;
+      lastErr = err;
     }
   }
+
+  // 降级：客户端压缩为 dataURL，直接存入备忘记录
+  try {
+    const dataUrl = await compressImageToDataURL(file);
+    return { url: dataUrl, fallback: true };
+  } catch (e) {
+    throw lastErr || e;
+  }
+}
+
+/**
+ * 图片压缩 → dataURL（内嵌存储用）
+ * 最大边 1280px，JPEG 逐级降质，控制在约 500KB 以内
+ */
+function compressImageToDataURL(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const img = new Image();
+      img.onload = () => {
+        const MAX = 1280;
+        let w = img.width, h = img.height;
+        if (Math.max(w, h) > MAX) {
+          const k = MAX / Math.max(w, h);
+          w = Math.round(w * k);
+          h = Math.round(h * k);
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        ctx.fillStyle = "#ffffff";   // JPEG 不支持透明，白底兜底
+        ctx.fillRect(0, 0, w, h);
+        ctx.drawImage(img, 0, 0, w, h);
+        // 逐级降质，直到体积达标
+        let result = "";
+        for (const q of [0.75, 0.6, 0.5, 0.4]) {
+          result = canvas.toDataURL("image/jpeg", q);
+          if (result.length <= 520 * 1024) break;
+        }
+        resolve(result);
+      };
+      img.onerror = () => reject(new Error("图片读取失败"));
+      img.src = ev.target.result;
+    };
+    reader.onerror = () => reject(new Error("图片读取失败"));
+    reader.readAsDataURL(file);
+  });
 }
 
 /* -------------------------------------------------------
@@ -1594,12 +1656,17 @@ $("fileInput").addEventListener("change", async (e) => {
 
   showLoading(true);
   try {
-    const url = await uploadImgToBmob(file);
-    pendingImgUrl = url;
-    showToast("图片上传成功 ✿");
+    const result = await uploadImgToBmob(file);
+    pendingImgUrl = result.url;
+    if (result.fallback) {
+      showToast("已压缩并保存到备忘 ✿（如需云端文件服务，可到 Bmob 后台绑定文件域名）");
+    } else {
+      showToast("图片上传成功 ✿");
+    }
   } catch (err) {
     showToast("图片上传失败：" + err.message);
     $("imgPreview").classList.remove("show");
+    pendingImgUrl = null;
   } finally {
     showLoading(false);
   }
