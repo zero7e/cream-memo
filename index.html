@@ -932,12 +932,13 @@ async function uploadImgToBmob(file) {
     }
   }
 
-  // 降级：客户端压缩为 dataURL，直接存入备忘记录
+  // 降级：客户端压缩为 dataURL，直接存入备忘记录（正常图片必然走这里成功）
   try {
     const dataUrl = await compressImageToDataURL(file);
     return { url: dataUrl, fallback: true };
   } catch (e) {
-    throw lastErr || e;
+    // 云端上传失败 + 本地压缩也失败：通常是所选文件不是有效图片
+    throw new Error("图片处理失败，请确认选择的是有效的图片文件（JPG/PNG 等）");
   }
 }
 
