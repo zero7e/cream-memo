@@ -9,7 +9,7 @@
      3. 会话管理      — 登录态保持 / 恢复 / 清除，UI 显隐统一入口
      4. Bmob API 引擎 — 统一鉴权 + 域名容灾 + 响应解析 + 文件上传
      5. 图片处理      — Canvas 压缩 → dataURL 降级存储
-     6. AI 备忘生成器 — 语义分析引擎（意图识别 + 实体提取 + 动态拼装）
+     6. AI 引擎        — 备忘生成 + 一键总结润色（意图识别 + 要点提炼 + 动态拼装）
      7. 状态管理      — 备忘列表、编辑态、标签选择 / 筛选
      8. 数据操作层    — CRUD + 归属校验封装（MemoDAO）
      9. 搜索 & 渲染   — 本地即时过滤、列表渲染、统计看板、撒花动画
@@ -351,13 +351,15 @@ function compressImageToDataURL(file) {
 }
 
 
-/* ====================  6. AI 备忘生成器（语义分析引擎）  ==================== */
+/* ====================  6. AI 引擎（备忘生成 + 总结润色）  ==================== */
 
 /*
  * ★★★ 产品内置 AI 交互能力，拿 Bmob+AI 融合创意分 ★★★
  *
  * 基于轻量 NLP：意图识别 + 实体提取 + 动态拼装
- * 每一句生成内容都引用用户原话，形成逻辑闭环
+ * 两套能力共用同一组共享分析工具：
+ *   · analyzeAndGenerate()  — 从一句话想法生成结构化备忘
+ *   · summarizeAndPolish()  — 读取已有笔记，提炼要点 + 结构化整理
  *
  * 替换为真实大模型的方法（已预留完整接口）：
  *   将 generateAIMemo() 中的生成逻辑替换为：
@@ -374,6 +376,9 @@ function compressImageToDataURL(file) {
  *   });
  *   const result = JSON.parse(resp.body).result;
  *   // 从 result 中提取标题和正文
+ *
+ *   AI 总结润色同理：把 summarizeAndPolish() 换成大模型调用，
+ *   prompt 示例："总结润色以下笔记，输出核心要点和下一步建议：<原文>"
  */
 
 /* ======== 意图识别：6 种意图类型，按优先级排序 ======== */
@@ -542,18 +547,15 @@ const TIPS = {
   ]
 };
 
-/**
- * AI 语义分析引擎
- * 真正读懂用户输入，动态生成有针对性的结构化内容
- * 每一步都引用用户的原话关键词，形成逻辑闭环
- *
- * @param   {string} rawInput - 用户输入的想法
- * @returns {{title: string, content: string, tag: string|null}}
- */
-function analyzeAndGenerate(rawInput) {
-  const text = rawInput.trim();
+/* ======== 共享语义分析工具（AI 生成 & AI 润色共用） ======== */
 
-  // === 1. 提取核心关键词（作为后续引用的"锚"） ===
+/**
+ * 提取核心关键词：去掉时间词、语气助词后取前 8 字
+ * 作为生成内容中反复引用的"锚"，让输出与用户原话形成逻辑闭环
+ * @param   {string} text - 原始文本
+ * @returns {string} 核心关键词
+ */
+function extractCoreKeyword(text) {
   let core = text;
   for (const t of TIME_MAP) {
     for (const w of t.words) {
@@ -564,38 +566,59 @@ function analyzeAndGenerate(rawInput) {
   core = core.replace(/[。，！？,.!?吧呢啊呀哦了的要去给我帮我一下一下子下一个一下]/g, '').trim();
   if (core.length < 2) core = text.trim();
   if (core.length > 8) core = core.slice(0, 8) + '…';
+  return core;
+}
 
-  // === 2. 识别意图 ===
-  let intent = "action";
-  let matchedVerb = "";
+/**
+ * 识别意图类型：按 INTENT_MAP 优先级匹配动词
+ * @param   {string} text - 原始文本
+ * @returns {object} INTENT_MAP 中的意图配置项（兜底 action）
+ */
+function detectIntent(text) {
   for (const val of INTENT_MAP) {
     for (const verb of val.verbs) {
-      if (text.includes(verb)) {
-        intent = val.name;
-        matchedVerb = verb;
-        break;
-      }
+      if (text.includes(verb)) return val;
     }
-    if (matchedVerb) break;
   }
+  return INTENT_MAP[INTENT_MAP.length - 1];
+}
 
-  // === 3. AI 开场回应（随机选一条，像在跟用户对话） ===
-  const intentConfig = INTENT_MAP.find(v => v.name === intent);
-  const reactList = intentConfig ? intentConfig.react : [];
+/**
+ * 识别时间词，返回对应的时间建议
+ * @param   {string} text - 原始文本
+ * @returns {string} 时间建议（无时间词则返回空字符串）
+ */
+function findTimeTip(text) {
+  for (const t of TIME_MAP) {
+    if (t.words.some(w => text.includes(w))) return t.tip;
+  }
+  return "";
+}
+
+/**
+ * AI 语义分析引擎（备忘生成）
+ * 真正读懂用户输入，动态生成有针对性的结构化内容
+ * 每一步都引用用户的原话关键词，形成逻辑闭环
+ *
+ * @param   {string} rawInput - 用户输入的想法
+ * @returns {{title: string, content: string, tag: string|null}}
+ */
+function analyzeAndGenerate(rawInput) {
+  const text = rawInput.trim();
+  const core = extractCoreKeyword(text);
+  const intentConfig = detectIntent(text);
+  const intent = intentConfig.name;
+
+  // AI 开场回应（随机选一条，像在跟用户对话）
+  const reactList = intentConfig.react;
   const react = reactList.length > 0
     ? reactList[Math.floor(Math.random() * reactList.length)]
     : "好的，让我们来搞定这件事！";
 
-  // === 4. 识别时间词 ===
-  let timeTip = "";
-  for (const t of TIME_MAP) {
-    if (t.words.some(w => text.includes(w))) {
-      timeTip = t.tip;
-      break;
-    }
-  }
+  // 识别时间词
+  const timeTip = findTimeTip(text);
 
-  // === 5. 动态生成 5 步行动清单（每步都引用核心关键词） ===
+  // 动态生成 5 步行动清单（每步都引用核心关键词）
   const templates = STEP_TEMPLATES[intent];
   const steps = templates.map((tpl, i) => {
     let step = tpl.replace("{obj}", core);
@@ -605,11 +628,11 @@ function analyzeAndGenerate(rawInput) {
     return step;
   });
 
-  // === 6. 随机选一条小贴士 ===
+  // 随机选一条小贴士
   const tips = TIPS[intent];
   const tip = tips[Math.floor(Math.random() * tips.length)];
 
-  // === 7. 拼装最终内容（有对话感 + 结构感） ===
+  // 拼装最终内容（有对话感 + 结构感）
   let content = `🗣️ ${react}\n\n📋 行动计划：\n`;
   content += steps.map((s, i) => `${i + 1}. ${s}`).join("\n");
   if (timeTip) {
@@ -617,13 +640,9 @@ function analyzeAndGenerate(rawInput) {
   }
   content += `\n\n💡 ${tip.replace("{obj}", core)}`;
 
-  // === 8. 生成标题（直接引用用户原话） ===
+  // 生成标题（直接引用用户原话）+ 推断标签
   const title = text.length > 12 ? text.slice(0, 12) + "…" : text;
-
-  // === 9. 推断标签 ===
-  const tag = intentConfig ? intentConfig.tag : null;
-
-  return { title, content, tag };
+  return { title, content, tag: intentConfig.tag };
 }
 
 /**
@@ -643,6 +662,92 @@ function generateAIMemo() {
     if (tag) pickTag(tag);
     showToast("AI 已分析你的需求，生成结构化内容 ✿");
   }, 900);
+}
+
+/**
+ * AI 总结润色引擎
+ * 读取已有笔记，提炼核心要点 → 结构化整理 → 给出下一步建议
+ * 不改写原意，只做「要点提炼 + 结构化 + 行动建议」
+ *
+ * @param   {string} title   - 原标题
+ * @param   {string} content - 原内容
+ * @returns {{title: string, content: string}} 润色后的标题和内容
+ */
+function summarizeAndPolish(title, content) {
+  const text = ((title || "") + " " + (content || "")).trim();
+
+  // 复用共享语义分析：意图 / 关键词 / 时间词
+  const intentConfig = detectIntent(text);
+  const core = extractCoreKeyword(text);
+  const timeTip = findTimeTip(text);
+
+  // 1. 从原内容提炼要点：按行/标点切分 → 去序号与空白 → 去重 → 最多 4 条
+  const rawLines = (content || "").split(/\n|。|；|;|！|!|？|\?/)
+    .map(s => s.replace(/^[\s\d.、·•\-–—*#]+/, "").trim())
+    .filter(s => s.length >= 4);
+  const points = [];
+  for (const line of rawLines) {
+    // 开头 4 字相同视为重复句，跳过
+    if (points.some(p => p.slice(0, 4) === line.slice(0, 4))) continue;
+    points.push(line.length > 30 ? line.slice(0, 30) + "…" : line);
+    if (points.length >= 4) break;
+  }
+  // 原文太碎提不出要点 → 用原标题兜底
+  if (points.length === 0) {
+    points.push((title || "").trim().slice(0, 30) || core);
+  }
+
+  // 2. 下一步建议：取该意图类型的前 3 个行动模板（引用核心关键词）
+  const steps = STEP_TEMPLATES[intentConfig.name].slice(0, 3)
+    .map(tpl => tpl.replace("{obj}", core));
+
+  // 3. 润色标题：按标签加 emoji 前缀，过长截断
+  const tagEmoji = { "工作": "💼", "生活": "🏡", "学习": "📚", "灵感": "✨" }[intentConfig.tag] || "📝";
+  let newTitle = (title || "").trim() || core;
+  if (newTitle.length > 14) newTitle = newTitle.slice(0, 14) + "…";
+  newTitle = tagEmoji + " " + newTitle;
+
+  // 4. 拼装润色内容
+  let polished = "✨ AI 润色整理\n\n";
+  polished += "📌 核心要点：\n" + points.map((p, i) => `${i + 1}. ${p}`).join("\n");
+  polished += "\n\n🎯 下一步建议：\n" + steps.map((s, i) => `${i + 1}. ${s}`).join("\n");
+  if (timeTip) {
+    polished += `\n\n⏰ 时间提示：${timeTip}`;
+  }
+
+  return { title: newTitle, content: polished };
+}
+
+/**
+ * 一键 AI 总结润色（卡片上的「✨ 润色」按钮）
+ * 流程：云端读取笔记（含归属校验）→ 生成润色稿 → 预填到编辑表单
+ * 用户检查满意后点「保存修改」落库；点「取消」则放弃，原文不受影响
+ *
+ * @param {string} id - 备忘 ID
+ */
+async function polishMemo(id) {
+  const m = await withLoading(() => MemoDAO.getById(id));
+
+  // 笔记不存在 / 已删除 / 无权访问 → 友好提示 + 清理本地残留卡片
+  if (!m) {
+    showToast("该笔记不存在、已被删除或无权访问");
+    memoList = memoList.filter(x => x.objectId !== id);
+    renderList();
+    return;
+  }
+  if (!(m.title || "").trim() && !(m.content || "").trim()) {
+    showToast("这条备忘还没有内容，先写点什么再润色吧");
+    return;
+  }
+
+  // 先按原文进入编辑模式（同步图片/标签等归属数据），再预填润色稿
+  enterEditMode(m);
+  const polished = summarizeAndPolish(m.title || "", m.content || "");
+  $("titleInput").value = polished.title;
+  $("contentInput").value = polished.content;
+  $("titleInput").focus();
+  window.scrollTo({ top: 0, behavior: "smooth" });
+  showToast("AI 已总结润色，检查满意后点「保存修改」✿");
 }
 
 
@@ -876,6 +981,7 @@ function renderList() {
         ${m.tag ? `<span class="tag-badge" data-tag="${escapeHtml(m.tag)}">${escapeHtml(m.tag)}</span>` : ''}
       </div>
       <div class="memo-actions">
+        <button class="btn-mini btn-polish" onclick="polishMemo('${m.objectId}')" title="AI 总结润色这条笔记">✨ 润色</button>
         <button class="btn-mini btn-edit" onclick="startEdit('${m.objectId}')">编辑</button>
         <button class="btn-mini btn-del" onclick="delMemo('${m.objectId}')">删除</button>
       </div>
@@ -1029,7 +1135,15 @@ async function startEdit(id) {
     return;
   }
 
-  editingId = id;
+  enterEditMode(m);
+}
+
+/**
+ * 进入编辑模式并填充表单（startEdit 与 polishMemo 共用）
+ * @param {object} m - 云端备忘对象（已通过归属校验，字段齐全）
+ */
+function enterEditMode(m) {
+  editingId = m.objectId;
   $("titleInput").value = m.title || "";
   $("contentInput").value = m.content || "";
   $("submitBtn").textContent = "💾 保存修改";
@@ -1044,7 +1158,7 @@ async function startEdit(id) {
   $("imgPreviewWrap").classList.toggle("show", !!m.imgUrl);
   $("imgPreview").src = m.imgUrl || "";
   // 同步本地缓存（以云端数据为准）
-  const local = memoList.find(x => x.objectId === id);
+  const local = memoList.find(x => x.objectId === m.objectId);
   if (local) Object.assign(local, m);
   $("titleInput").focus();
   window.scrollTo({ top: 0, behavior: "smooth" });
