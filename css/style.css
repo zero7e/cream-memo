@@ -556,6 +556,7 @@ body {
   transition: all 0.1s;
 }
 .btn-edit { background: #5b8def; color: #fff; box-shadow: 2px 2px 0 var(--shadow); }
+.btn-polish { background: #6b4fff; color: #fff; box-shadow: 2px 2px 0 var(--shadow); } /* AI 润色按钮（与 AI 生成区同色系） */
 .btn-del  { background: #ff5b5b; color: #fff; margin-left: auto; box-shadow: 2px 2px 0 var(--shadow); }
 .btn-mini:hover { transform: translate(-1px,-1px); box-shadow: 3px 3px 0 var(--shadow); }
 .btn-mini:active { transform: translate(1px,1px); box-shadow: 1px 1px 0 var(--shadow); }
