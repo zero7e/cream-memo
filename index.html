@@ -17,6 +17,7 @@
     index.html          ← HTML 结构（仅页面骨架 + onclick 事件绑定）
     css/style.css       ← 全部样式（6 套主题 + 响应式 + 动画）
     js/app.js           ← 全部逻辑（API 引擎 / 数据操作 / AI / 交互 / 初始化）
+    server/sse_server.py← Python SSE 流式服务（AI 推送 + 归属校验 + 托管静态文件）
 
   ★★★ 手动配置区 ★★★
   请把 js/app.js 顶部 APPLICATION_ID 和 REST_API_KEY 换成你自己的 Bmob 密钥：
@@ -41,7 +42,7 @@
   - 备忘增删改查（写操作内置归属校验）
   - 6 套主题配色一键切换
   - AI 语义分析备忘生成器（意图识别 + 行动清单）
-  - 已有笔记一键 AI 总结润色（要点提炼 + 结构化整理，确认后保存）
+  - 已有笔记一键 AI 总结润色（SSE 流式打字机输出，归属校验后自动新建笔记，可中断）
   - 标签选择 + 标签筛选
   - 本地即时搜索（DOM 显隐，零网络请求）
   - 图片上传即落库（Bmob 文件服务 / dataURL 压缩降级）
@@ -194,6 +195,24 @@
 <!-- 图片灯箱：点击任意图片全屏放大，再点任意处或按 ESC 关闭 -->
 <div class="lightbox" id="lightbox" onclick="closeLightbox()">
   <img id="lightboxImg" alt="图片大图" />
+</div>
+
+<!-- AI SSE 流式润色面板：思考中状态 + 逐字打字机输出 + 中断/完成操作（配套 server/sse_server.py） -->
+<div class="stream-overlay" id="streamOverlay">
+  <div class="stream-box">
+    <div class="stream-head">
+      <span class="stream-title">✨ AI 总结润色</span>
+      <button class="stream-close" onclick="AI_STREAM.close()" title="关闭（生成中关闭将中断且不保存）">✕</button>
+    </div>
+    <div class="stream-sub" id="streamSource"></div>
+    <div class="stream-body thinking" id="streamBody">
+      <span class="think-dots"><i></i><i></i><i></i></span>AI 思考中…
+    </div>
+    <div class="stream-foot">
+      <span class="stream-status st-thinking" id="streamStatus">AI 正在阅读笔记、整理思路…</span>
+      <span class="stream-actions" id="streamActions"></span>
+    </div>
+  </div>
 </div>
 
 <!-- 登录弹窗 -->
