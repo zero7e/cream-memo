@@ -748,17 +748,38 @@ body {
 }
 .stream-body.thinking {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 10px;
+  gap: 14px;
   color: var(--text-l);
   font-weight: 700;
-  font-size: 15px;
+  min-height: 190px;
+}
+/* 思考中主指示器：跳动圆点 + 「AI 思考中」文字 */
+.think-indicator {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.think-text {
+  font-size: 18px;
+  font-weight: 900;
+  color: #6b4fff;
+  letter-spacing: 1px;
+}
+.think-hint {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-l);
+  margin: 0;
+  line-height: 1.6;
+  text-align: center;
 }
 /* 思考中三个跳动圆点 */
-.think-dots { display: inline-flex; gap: 5px; }
+.think-dots { display: inline-flex; gap: 6px; }
 .think-dots i {
-  width: 8px; height: 8px;
+  width: 10px; height: 10px;
   border-radius: 50%;
   background: #6b4fff;
   animation: thinkBounce 1s infinite ease-in-out;
@@ -767,7 +788,7 @@ body {
 .think-dots i:nth-child(3) { animation-delay: 0.3s; }
 @keyframes thinkBounce {
   0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
-  40%           { transform: scale(1.1); opacity: 1; }
+  40%           { transform: scale(1.3); opacity: 1; }
 }
 /* 打字机闪烁光标（emoji 宽度的紫色竖块） */
 .stream-caret {
