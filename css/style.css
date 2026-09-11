@@ -675,6 +675,134 @@ body {
   object-fit: contain;
 }
 
+/* AI SSE 流式润色面板（Neo-Brutalism，与登录卡片同一套边框/硬阴影语言） */
+.stream-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 800;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(107,79,255,0.18);
+  backdrop-filter: blur(3px);
+}
+.stream-overlay.show { display: flex; animation: pop 0.25s ease; }
+.stream-box {
+  background: var(--card);
+  border: 3px solid var(--border);
+  border-radius: 16px;
+  box-shadow: 8px 8px 0 var(--shadow);
+  width: 92%;
+  max-width: 560px;
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.stream-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 2px dashed var(--border);
+}
+.stream-title { font-size: 16px; font-weight: 900; color: #6b4fff; }
+.stream-close {
+  width: 30px; height: 30px;
+  border: 2px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text);
+  font-weight: 900;
+  cursor: pointer;
+  font-family: inherit;
+  box-shadow: 2px 2px 0 var(--shadow);
+  transition: all 0.1s;
+}
+.stream-close:hover { background: #ff5b5b; color: #fff; }
+.stream-close:active { transform: translate(1px,1px); box-shadow: 1px 1px 0 var(--shadow); }
+.stream-sub {
+  padding: 10px 18px 0;
+  font-size: 12px;
+  color: var(--text-l);
+  font-weight: 700;
+  min-height: 14px;
+  word-break: break-word;
+}
+/* 流式正文区：等宽换行 + 滚动，打字机文本节点直接写在里面 */
+.stream-body {
+  margin: 12px 18px;
+  padding: 14px;
+  min-height: 190px;
+  max-height: 44vh;
+  overflow-y: auto;
+  background: #fff;
+  border: 2px solid var(--border);
+  border-radius: 10px;
+  font-size: 14px;
+  line-height: 1.9;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.stream-body.thinking {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--text-l);
+  font-weight: 700;
+  font-size: 15px;
+}
+/* 思考中三个跳动圆点 */
+.think-dots { display: inline-flex; gap: 5px; }
+.think-dots i {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: #6b4fff;
+  animation: thinkBounce 1s infinite ease-in-out;
+}
+.think-dots i:nth-child(2) { animation-delay: 0.15s; }
+.think-dots i:nth-child(3) { animation-delay: 0.3s; }
+@keyframes thinkBounce {
+  0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+  40%           { transform: scale(1.1); opacity: 1; }
+}
+/* 打字机闪烁光标（emoji 宽度的紫色竖块） */
+.stream-caret {
+  display: inline-block;
+  width: 8px;
+  height: 17px;
+  margin-left: 2px;
+  vertical-align: -2px;
+  background: #6b4fff;
+  animation: caretBlink 0.8s step-start infinite;
+}
+@keyframes caretBlink { 50% { opacity: 0; } }
+/* 底部：状态文案 + 操作按钮 */
+.stream-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 18px;
+  border-top: 2px dashed var(--border);
+  flex-wrap: wrap;
+}
+.stream-status { font-size: 13px; font-weight: 800; line-height: 1.5; }
+.st-thinking  { color: #6b4fff; }
+.st-streaming { color: var(--primary); }
+.st-done      { color: #16a34a; }
+.st-aborted   { color: var(--text-l); }
+.st-error     { color: #ff5b5b; }
+.stream-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+/* 各功能按钮独立配色（停止红 / 完成紫 / 重试蓝 / 本地整理橙） */
+.btn-stop  { background: #ff5b5b; color: #fff; box-shadow: 2px 2px 0 var(--shadow); }
+.btn-done  { background: #6b4fff; color: #fff; box-shadow: 2px 2px 0 var(--shadow); }
+.btn-retry { background: #5b8def; color: #fff; box-shadow: 2px 2px 0 var(--shadow); }
+.btn-local { background: #ff8c42; color: #fff; box-shadow: 2px 2px 0 var(--shadow); }
+
 /* 登录弹窗 */
 .login-overlay {
   display: none;
