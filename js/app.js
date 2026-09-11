@@ -718,17 +718,323 @@ function summarizeAndPolish(title, content) {
   return { title: newTitle, content: polished };
 }
 
+/* ==========================================================================
+   6.5 AI SSE 流式润色（配套 Python 服务：server/sse_server.py）
+   ──────────────────────────────────────────────────────────────────────────
+   链路：卡片「✨ 润色」→ POST /api/polish（同源 SSE）
+     后端先做 Bmob 归属校验（403 拒绝他人笔记）→ AI 流式生成 →
+     完整结果由后端【新建一条笔记】入库（原笔记不动）→ done 帧带新笔记 ID
+   前端两层设计（避免「chunk 到达直接追加」造成的非打字机体验）：
+     · 数据层：ReadableStream 持续读 SSE delta，喂入字符队列 queueChars
+     · 展示层：pump 定时器每 24ms 从队列搬 2 个码点到面板，稳定逐字播放
+   安全网：
+     · AbortController 一键中断 → 后端检测断连，绝不写 Bmob（无脏数据）
+     · 超时 / AI 报错 / 超长只收到 error 帧，同样不入库
+     · 本地 Python 服务不可达时（如 GitHub Pages 纯静态环境），
+       自动降级为浏览器内置 summarizeAndPolish 整理，功能不瘫痪
+   ========================================================================== */
+
+const AI_STREAM = {
+  URL: "/api/polish",
+
+  state: "idle",          // idle | running | done | aborted | error
+  noteId: null,           // 正在润色的原笔记 ID
+  ac: null,               // AbortController（中断 fetch + reader）
+  queueChars: [],         // 数据层：已收到、待播放的字符队列（按码点）
+  fullText: "",           // 已收到的完整文本（本地累计，不依赖闭包快照）
+  textNode: null,         // 展示层：流式正文所在文本节点
+  pumpTimer: null,        // 打字机定时器
+  networkEnded: false,    // SSE 连接是否已结束
+  pendingDone: null,      // 收到的 done 事件（等打字播放完再进完成态）
+
+  /** 打开面板并重置全部状态 */
+  open(noteId, sourceTitle) {
+    this.reset();
+    this.state = "running";
+    this.noteId = noteId;
+
+    $("streamSource").textContent = sourceTitle
+      ? "原笔记：" + (sourceTitle.length > 24 ? sourceTitle.slice(0, 24) + "…" : sourceTitle)
+      : "";
+    // 思考中占位（首个 delta 到达后替换为真正的输出区）
+    const body = $("streamBody");
+    body.className = "stream-body thinking";
+    body.innerHTML = '<span class="think-dots"><i></i><i></i><i></i></span>AI 思考中…';
+
+    this.setStatus("thinking", "AI 正在阅读笔记、整理思路…");
+    this.renderActions("running");
+    $("streamOverlay").classList.add("show");
+  },
+
+  /** 重置状态（关闭 / 重试前调用） */
+  reset() {
+    if (this.pumpTimer) { clearInterval(this.pumpTimer); this.pumpTimer = null; }
+    if (this.ac) { try { this.ac.abort(); } catch (e) {} }
+    this.ac = null;
+    this.state = "idle";
+    this.queueChars = [];
+    this.fullText = "";
+    this.textNode = null;
+    this.networkEnded = false;
+    this.pendingDone = null;
+  },
+
+  /**
+   * 发起 SSE 请求并逐帧读取
+   * 连接层失败（服务未启动 / 静态托管环境）→ 自动降级本地整理
+   */
+  async connect(id) {
+    const ac = new AbortController();
+    this.ac = ac;
+
+    let resp;
+    try {
+      resp = await fetch(this.URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Accept": "text/event-stream" },
+        body: JSON.stringify({ noteId: id, username: currentUser }),
+        signal: ac.signal
+      });
+    } catch (e) {
+      // 用户主动中止 vs 服务不可达（file:// / GitHub Pages / 没启动 Python）
+      if (ac.signal.aborted) { this.markAborted(); return; }
+      this.fallbackLocal("本地 AI 服务未启动");
+      return;
+    }
+
+    // 非 200：403 是归属拒绝（业务错误，不降级）；其余视为服务不可用 → 降级
+    if (!resp.ok) {
+      if (resp.status === 403) {
+        this.close();
+        showToast("该笔记不存在、已被删除或无权访问");
+        memoList = memoList.filter(x => x.objectId !== id);
+        renderList();
+        return;
+      }
+      let msg = "本地 AI 服务不可用";
+      try {
+        const j = await resp.json();
+        if (j && j.error) msg = j.error;
+      } catch (e) {}
+      // 400 参数错误直接提示；404/405/5xx 走降级
+      if (resp.status === 400) { this.fail(msg, "request"); return; }
+      this.fallbackLocal(msg + "（HTTP " + resp.status + "）");
+      return;
+    }
+
+    // 200 但不是 SSE（被静态服务器/托管商兜底成 HTML）→ 降级
+    const ctype = resp.headers.get("content-type") || "";
+    if (!ctype.includes("text/event-stream")) {
+      this.fallbackLocal("本地 AI 服务不可用");
+      return;
+    }
+
+    // 启动打字机展示层（数据到达前空转也无妨）
+    this.startPump();
+
+    // 读取 SSE 字节流，按 \n\n 切帧（半包留在 buffer）
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder("utf-8");
+    let buffer = "";
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let sep;
+        while ((sep = buffer.indexOf("\n\n")) !== -1) {
+          const frame = buffer.slice(0, sep);
+          buffer = buffer.slice(sep + 2);
+          this.handleFrame(frame);
+        }
+      }
+      this.networkEnded = true;
+      // 服务器正常关闭却没给 done/error（异常断流）→ 友好提示，不入库
+      if (this.state === "running" && !this.pendingDone) {
+        this.fail("流式连接意外中断，请重试", "network");
+      }
+    } catch (e) {
+      this.networkEnded = true;
+      if (ac.signal.aborted) this.markAborted();
+      else this.fail("网络中断：" + e.message, "network");
+    }
+  },
+
+  /**
+   * 解析一帧 SSE：只消费 data: 行，忽略注释(:)/event/id/retry 行
+   */
+  handleFrame(frame) {
+    const dataLines = [];
+    for (const line of frame.split("\n")) {
+      if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+    }
+    if (dataLines.length === 0) return;
+    let ev;
+    try { ev = JSON.parse(dataLines.join("\n")); } catch (e) { return; }
+
+    if (ev.type === "delta") this.onDelta(ev.text || "");
+    else if (ev.type === "done") {
+      this.pendingDone = ev;
+      // 若打字队列恰好已空，pump 不会再触发，这里主动收尾
+      if (this.queueChars.length === 0) this.completeDone();
+    }
+    else if (ev.type === "error") this.fail(ev.message || "AI 生成失败", ev.stage || "ai");
+    // start 等其他事件无需处理
+  },
+
+  /** 数据层：增量文本入队（不直接操作 DOM，节奏由 pump 控制） */
+  onDelta(text) {
+    if (this.state !== "running") return;
+    // 首个 delta：把思考占位换成正文区（文本节点 + 闪烁光标）
+    if (!this.textNode) {
+      const body = $("streamBody");
+      body.className = "stream-body";
+      body.innerHTML = "";
+      this.textNode = document.createTextNode("");
+      body.appendChild(this.textNode);
+      const caret = document.createElement("span");
+      caret.className = "stream-caret";
+      body.appendChild(caret);
+      this.setStatus("streaming", "AI 正在输出…");
+    }
+    this.fullText += text;
+    // 按码点入队，emoji 不会被切坏
+    for (const ch of text) this.queueChars.push(ch);
+    this.setStatus("streaming", "AI 正在输出… " + this.fullText.length + " 字");
+  },
+
+  /** 展示层：每 24ms 从队列搬 2 个码点到正文，形成稳定打字节奏 */
+  startPump() {
+    this.pumpTimer = setInterval(() => {
+      let moved = 0;
+      while (moved < 2 && this.queueChars.length > 0) {
+        this.textNode && (this.textNode.nodeValue += this.queueChars.shift());
+        moved++;
+      }
+      // 队列清空：网络已结束 → 按结果收尾；否则继续等待喂数据
+      if (this.queueChars.length === 0) {
+        if (this.pendingDone) this.completeDone();
+        else if (this.networkEnded && this.state === "running") {
+          /* fail/abort 已在读取循环处理，这里兜底等待 */
+        }
+      }
+    }, 24);
+  },
+
+  /** 生成完成且已入库（由后端新建笔记）→ 成功态 + 刷新列表 */
+  completeDone() {
+    if (this.state === "done") return;
+    if (this.pumpTimer) { clearInterval(this.pumpTimer); this.pumpTimer = null; }
+    this.state = "done";
+    const ev = this.pendingDone || {};
+    // 光标替换成收尾标记
+    const caret = $("streamBody").querySelector(".stream-caret");
+    if (caret) caret.remove();
+    this.setStatus("done", "✅ 已完成，润色稿已自动保存为一条【新笔记】（原笔记未改动）");
+    this.renderActions("done");
+    showToast("AI 润色完成，已新建笔记 ✿");
+    // 拉取最新列表（新笔记由后端写入，带后端返回的 objectId）
+    fetchMemos().catch(() => {});
+  },
+
+  /** 用户点「停止生成」：中断连接；后端感知断连后不会写 Bmob */
+  userAbort() {
+    if (this.ac) { try { this.ac.abort(); } catch (e) {} }
+    this.markAborted();
+  },
+
+  markAborted() {
+    if (this.state === "aborted" || this.state === "done") return;
+    if (this.pumpTimer) { clearInterval(this.pumpTimer); this.pumpTimer = null; }
+    this.state = "aborted";
+    const caret = $("streamBody").querySelector(".stream-caret");
+    if (caret) caret.remove();
+    this.setStatus("aborted", "⏹ 已中断生成，未保存任何内容（原笔记不受影响）");
+    this.renderActions("aborted");
+  },
+
+  /** AI 报错 / 超时 / 超长 / 异常断流：只提示，不入库 */
+  fail(message, stage) {
+    if (this.state === "done") return;
+    if (this.pumpTimer) { clearInterval(this.pumpTimer); this.pumpTimer = null; }
+    this.state = "error";
+    const caret = $("streamBody").querySelector(".stream-caret");
+    if (caret) caret.remove();
+    const prefix = stage === "too_long" ? "⚠ 文本超长：" : "⚠ 生成失败：";
+    this.setStatus("error", prefix + message);
+    this.renderActions("error");
+  },
+
+  /** 本地服务不可达 → 关闭面板，降级为浏览器内置整理（旧流程） */
+  fallbackLocal(reason) {
+    const id = this.noteId;
+    this.close();
+    showToast(reason + "，已切换本地整理模式");
+    localPolishFallback(id);
+  },
+
+  /** 关闭面板（运行中关闭视同中断） */
+  close() {
+    const wasRunning = this.state === "running";
+    this.reset();
+    $("streamOverlay").classList.remove("show");
+    if (wasRunning) showToast("已中断，未保存任何内容");
+  },
+
+  /** 更新底部状态文字（带语义 class，便于配色） */
+  setStatus(mode, msg) {
+    const el = $("streamStatus");
+    el.className = "stream-status st-" + mode;
+    el.textContent = msg;
+  },
+
+  /** 根据状态渲染底部操作按钮（onclick 调全局函数） */
+  renderActions(mode) {
+    const box = $("streamActions");
+    if (mode === "running") {
+      box.innerHTML = '<button class="btn-mini btn-stop" onclick="AI_STREAM.userAbort()">■ 停止生成</button>';
+    } else if (mode === "done") {
+      box.innerHTML = '<button class="btn-mini btn-done" onclick="AI_STREAM.close()">✅ 完成</button>';
+    } else {
+      // aborted / error：可重试、可降级本地整理、可关闭
+      box.innerHTML =
+        '<button class="btn-mini btn-retry" onclick="retryPolish()">🔁 重试</button>' +
+        '<button class="btn-mini btn-local" onclick="localPolishFallback(AI_STREAM.noteId);AI_STREAM.close()">📝 本地整理</button>' +
+        '<button class="btn-mini btn-del" onclick="AI_STREAM.close()">关闭</button>';
+    }
+  }
+};
+
 /**
  * 一键 AI 总结润色（卡片上的「✨ 润色」按钮）
- * 流程：云端读取笔记（含归属校验）→ 生成润色稿 → 预填到编辑表单
- * 用户检查满意后点「保存修改」落库；点「取消」则放弃，原文不受影响
- *
+ * 默认走 Python SSE 流式服务；服务不可用时 connect() 内部自动降级本地整理
  * @param {string} id - 备忘 ID
  */
 async function polishMemo(id) {
-  const m = await withLoading(() => MemoDAO.getById(id));
+  if (AI_STREAM.state === "running") {
+    showToast("AI 正在生成中，请先停止当前任务");
+    return;
+  }
+  const local = memoList.find(m => m.objectId === id);
+  AI_STREAM.open(id, local ? (local.title || "") : "");
+  await AI_STREAM.connect(id);
+}
 
-  // 笔记不存在 / 已删除 / 无权访问 → 友好提示 + 清理本地残留卡片
+/** 中断后重试一次 */
+function retryPolish() {
+  const id = AI_STREAM.noteId;
+  if (!id) { AI_STREAM.close(); return; }
+  AI_STREAM.open(id, $("streamSource").textContent.replace(/^原笔记：/, ""));
+  AI_STREAM.connect(id);
+}
+
+/**
+ * 本地降级整理（无 Python 服务时使用）：云端归属校验 → 内置引擎生成 → 预填表单
+ * 用户检查满意后手动点「保存修改」，点「取消」则放弃，原文不受影响
+ * @param {string} id - 备忘 ID
+ */
+async function localPolishFallback(id) {
+  const m = await withLoading(() => MemoDAO.getById(id));
   if (!m) {
     showToast("该笔记不存在、已被删除或无权访问");
     memoList = memoList.filter(x => x.objectId !== id);
@@ -739,15 +1045,13 @@ async function polishMemo(id) {
     showToast("这条备忘还没有内容，先写点什么再润色吧");
     return;
   }
-
-  // 先按原文进入编辑模式（同步图片/标签等归属数据），再预填润色稿
   enterEditMode(m);
   const polished = summarizeAndPolish(m.title || "", m.content || "");
   $("titleInput").value = polished.title;
   $("contentInput").value = polished.content;
   $("titleInput").focus();
   window.scrollTo({ top: 0, behavior: "smooth" });
-  showToast("AI 已总结润色，检查满意后点「保存修改」✿");
+  showToast("AI 已本地总结润色，检查满意后点「保存修改」✿");
 }
 
 
@@ -1522,5 +1826,11 @@ function isSessionExpired(e) {
   });
   $("loginPass").addEventListener("keydown", (e) => {
     if (e.key === "Enter") { e.preventDefault(); $("loginBtn").click(); }
+  });
+  // ESC 关闭 AI 流式面板（生成中关闭会中断且不保存）
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && $("streamOverlay").classList.contains("show")) {
+      AI_STREAM.close();
+    }
   });
 })();
