@@ -737,6 +737,8 @@ function summarizeAndPolish(title, content) {
 const AI_STREAM = {
   URL: "/api/polish",
 
+  MIN_THINKING_MS: 1500,  // 「AI 思考中」最少展示时长（毫秒），避免大模型首字太快而一闪而过
+
   state: "idle",          // idle | running | done | aborted | error
   noteId: null,           // 正在润色的原笔记 ID
   ac: null,               // AbortController（中断 fetch + reader）
@@ -746,20 +748,29 @@ const AI_STREAM = {
   pumpTimer: null,        // 打字机定时器
   networkEnded: false,    // SSE 连接是否已结束
   pendingDone: null,      // 收到的 done 事件（等打字播放完再进完成态）
+  thinkingStartedAt: 0,   // 思考中状态开始的时间戳，用于保证最少展示时长
+  firstDeltaTimer: null,  // 首字延时播放计时器（思考时长不足时缓冲用）
+  bufferedFirstText: "",  // 思考时长不足期间缓冲的首段文本
 
   /** 打开面板并重置全部状态 */
   open(noteId, sourceTitle) {
     this.reset();
     this.state = "running";
     this.noteId = noteId;
+    this.thinkingStartedAt = Date.now();
 
     $("streamSource").textContent = sourceTitle
       ? "原笔记：" + (sourceTitle.length > 24 ? sourceTitle.slice(0, 24) + "…" : sourceTitle)
       : "";
-    // 思考中占位（首个 delta 到达后替换为真正的输出区）
+    // 思考中占位（首个 delta 到达且思考时长满足后才替换为正文区）
     const body = $("streamBody");
     body.className = "stream-body thinking";
-    body.innerHTML = '<span class="think-dots"><i></i><i></i><i></i></span>AI 思考中…';
+    body.innerHTML =
+      '<div class="think-indicator">' +
+        '<span class="think-dots"><i></i><i></i><i></i></span>' +
+        '<span class="think-text">AI 思考中</span>' +
+      '</div>' +
+      '<p class="think-hint">正在阅读笔记、提炼核心要点、生成行动建议…</p>';
 
     this.setStatus("thinking", "AI 正在阅读笔记、整理思路…");
     this.renderActions("running");
@@ -769,6 +780,7 @@ const AI_STREAM = {
   /** 重置状态（关闭 / 重试前调用） */
   reset() {
     if (this.pumpTimer) { clearInterval(this.pumpTimer); this.pumpTimer = null; }
+    if (this.firstDeltaTimer) { clearTimeout(this.firstDeltaTimer); this.firstDeltaTimer = null; }
     if (this.ac) { try { this.ac.abort(); } catch (e) {} }
     this.ac = null;
     this.state = "idle";
@@ -777,6 +789,8 @@ const AI_STREAM = {
     this.textNode = null;
     this.networkEnded = false;
     this.pendingDone = null;
+    this.thinkingStartedAt = 0;
+    this.bufferedFirstText = "";
   },
 
   /**
@@ -876,31 +890,77 @@ const AI_STREAM = {
     else if (ev.type === "done") {
       this.pendingDone = ev;
       // 若打字队列恰好已空，pump 不会再触发，这里主动收尾
-      if (this.queueChars.length === 0) this.completeDone();
+      if (this.queueChars.length === 0 && this.textNode) this.completeDone();
     }
     else if (ev.type === "error") this.fail(ev.message || "AI 生成失败", ev.stage || "ai");
-    // start 等其他事件无需处理
+    // start 事件：AI 已开始思考（后端已通过归属校验，请求大模型中），刷新思考状态文案
+    else if (ev.type === "start") {
+      this.setStatus("thinking", "AI 已读取笔记，正在调用大模型思考…");
+    }
   },
 
-  /** 数据层：增量文本入队（不直接操作 DOM，节奏由 pump 控制） */
+  /** 把思考占位替换成正文区（文本节点 + 闪烁光标） */
+  switchToOutputStream() {
+    const body = $("streamBody");
+    body.className = "stream-body";
+    body.innerHTML = "";
+    this.textNode = document.createTextNode("");
+    body.appendChild(this.textNode);
+    const caret = document.createElement("span");
+    caret.className = "stream-caret";
+    body.appendChild(caret);
+    this.setStatus("streaming", "AI 正在输出… " + this.fullText.length + " 字");
+  },
+
+  /**
+   * 把缓冲的首段文本刷入队列；若尚未进入输出态则先切换。
+   * 保证 switchToOutputStream 只被调用一次，避免后续 delta 与定时器竞态导致 DOM 重置丢内容。
+   */
+  flushBuffer() {
+    if (!this.textNode) this.switchToOutputStream();
+    for (const ch of this.bufferedFirstText) this.queueChars.push(ch);
+    this.bufferedFirstText = "";
+  },
+
+  /**
+   * 数据层：增量文本入队（不直接操作 DOM，节奏由 pump 控制）
+   * 关键逻辑：首段文本到达时，若「思考中」展示时长不足 MIN_THINKING_MS，
+   * 先把文本缓冲起来，等足时长再切换到输出态，保证用户能看清思考动画。
+   */
   onDelta(text) {
     if (this.state !== "running") return;
-    // 首个 delta：把思考占位换成正文区（文本节点 + 闪烁光标）
-    if (!this.textNode) {
-      const body = $("streamBody");
-      body.className = "stream-body";
-      body.innerHTML = "";
-      this.textNode = document.createTextNode("");
-      body.appendChild(this.textNode);
-      const caret = document.createElement("span");
-      caret.className = "stream-caret";
-      body.appendChild(caret);
-      this.setStatus("streaming", "AI 正在输出…");
-    }
     this.fullText += text;
-    // 按码点入队，emoji 不会被切坏
+
+    // 尚未进入输出态：需要判断思考时长是否足够
+    if (!this.textNode) {
+      const elapsed = Date.now() - this.thinkingStartedAt;
+      const remaining = this.MIN_THINKING_MS - elapsed;
+      if (remaining > 0) {
+        // 思考时长不够 → 缓冲首段文本，到点再播放
+        this.bufferedFirstText += text;
+        if (!this.firstDeltaTimer) {
+          this.firstDeltaTimer = setTimeout(() => {
+            this.firstDeltaTimer = null;
+            this.flushBuffer();
+          }, remaining);
+        }
+        return;
+      }
+      // 思考时长已够 → 清掉可能的定时器，把缓冲和当前文本一起入队
+      if (this.firstDeltaTimer) {
+        clearTimeout(this.firstDeltaTimer);
+        this.firstDeltaTimer = null;
+      }
+      this.switchToOutputStream();
+      for (const ch of this.bufferedFirstText) this.queueChars.push(ch);
+      this.bufferedFirstText = "";
+    }
+
+    // 已经（或即将）在输出态：当前文本入队
     for (const ch of text) this.queueChars.push(ch);
-    this.setStatus("streaming", "AI 正在输出… " + this.fullText.length + " 字");
+    if (this.textNode) {
+      this.setStatus("streaming", "AI 正在输出… " + this.fullText.length + " 字");
+    }
   },
 
   /** 展示层：每 24ms 从队列搬 2 个码点到正文，形成稳定打字节奏 */
@@ -912,7 +972,9 @@ const AI_STREAM = {
         moved++;
       }
       // 队列清空：网络已结束 → 按结果收尾；否则继续等待喂数据
-      if (this.queueChars.length === 0) {
+      // 注意：若仍处于思考缓冲期（textNode 未创建），即使 done 已到也不能收尾，
+      // 需等首字定时器触发、缓冲文本播放完再收尾
+      if (this.queueChars.length === 0 && this.textNode) {
         if (this.pendingDone) this.completeDone();
         else if (this.networkEnded && this.state === "running") {
           /* fail/abort 已在读取循环处理，这里兜底等待 */
@@ -946,6 +1008,7 @@ const AI_STREAM = {
   markAborted() {
     if (this.state === "aborted" || this.state === "done") return;
     if (this.pumpTimer) { clearInterval(this.pumpTimer); this.pumpTimer = null; }
+    if (this.firstDeltaTimer) { clearTimeout(this.firstDeltaTimer); this.firstDeltaTimer = null; }
     this.state = "aborted";
     const caret = $("streamBody").querySelector(".stream-caret");
     if (caret) caret.remove();
@@ -957,6 +1020,7 @@ const AI_STREAM = {
   fail(message, stage) {
     if (this.state === "done") return;
     if (this.pumpTimer) { clearInterval(this.pumpTimer); this.pumpTimer = null; }
+    if (this.firstDeltaTimer) { clearTimeout(this.firstDeltaTimer); this.firstDeltaTimer = null; }
     this.state = "error";
     const caret = $("streamBody").querySelector(".stream-caret");
     if (caret) caret.remove();
