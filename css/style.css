@@ -723,6 +723,10 @@ body {
 .stream-close:hover { background: #ff5b5b; color: #fff; }
 .stream-close:active { transform: translate(1px,1px); box-shadow: 1px 1px 0 var(--shadow); }
 .stream-sub {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
   padding: 10px 18px 0;
   font-size: 12px;
   color: var(--text-l);
@@ -730,6 +734,24 @@ body {
   min-height: 14px;
   word-break: break-word;
 }
+/* 第一层 AI 识别出的笔记类型标签（chip），按类型显示不同颜色 */
+.stream-cat {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.6;
+  white-space: nowrap;
+  background: #ede9fe;
+  color: #6d28d9;
+  border: 1px solid rgba(109, 40, 217, 0.18);
+}
+.stream-cat.cat-code   { background: #dbeafe; color: #1d4ed8; border-color: rgba(29, 78, 216, 0.18); }
+.stream-cat.cat-study  { background: #dcfce7; color: #15803d; border-color: rgba(21, 128, 61, 0.18); }
+.stream-cat.cat-diary  { background: #fce7f3; color: #be185d; border-color: rgba(190, 24, 93, 0.18); }
+.stream-cat.cat-long   { background: #ffedd5; color: #c2410c; border-color: rgba(194, 65, 12, 0.18); }
+.stream-cat.cat-general{ background: #ede9fe; color: #6d28d9; border-color: rgba(109, 40, 217, 0.18); }
 /* 流式正文区：等宽换行 + 滚动，打字机文本节点直接写在里面 */
 .stream-body {
   margin: 12px 18px;
