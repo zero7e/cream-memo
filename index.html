@@ -57,7 +57,7 @@
 ================================================================================
 -->
 
-<link rel="stylesheet" href="css/style.css?v=20260911" />
+<link rel="stylesheet" href="css/style.css?v=20260912" />
 </head>
 
 <body>
@@ -204,7 +204,10 @@
       <span class="stream-title">✨ AI 总结润色</span>
       <button class="stream-close" onclick="AI_STREAM.close()" title="关闭（生成中关闭将中断且不保存）">✕</button>
     </div>
-    <div class="stream-sub" id="streamSource"></div>
+    <div class="stream-sub">
+      <span id="streamSource"></span>
+      <span class="stream-cat" id="streamCategory" style="display:none"></span>
+    </div>
     <div class="stream-body thinking" id="streamBody">
       <span class="think-dots"><i></i><i></i><i></i></span>AI 思考中…
     </div>
@@ -230,6 +233,6 @@
   </div>
 </div>
 
-<script src="js/app.js?v=20260911"></script>
+<script src="js/app.js?v=20260913"></script>
 </body>
 </html>
