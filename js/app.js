@@ -751,6 +751,8 @@ const AI_STREAM = {
   thinkingStartedAt: 0,   // 思考中状态开始的时间戳，用于保证最少展示时长
   firstDeltaTimer: null,  // 首字延时播放计时器（思考时长不足时缓冲用）
   bufferedFirstText: "",  // 思考时长不足期间缓冲的首段文本
+  category: "general",    // 第一层识别出的笔记类型 key
+  categoryLabel: "",      // 第一层识别出的类型中文名
 
   /** 打开面板并重置全部状态 */
   open(noteId, sourceTitle) {
@@ -762,7 +764,14 @@ const AI_STREAM = {
     $("streamSource").textContent = sourceTitle
       ? "原笔记：" + (sourceTitle.length > 24 ? sourceTitle.slice(0, 24) + "…" : sourceTitle)
       : "";
+    // 重置类型 chip（第一层识别结果到达后再显示）
+    const chip = $("streamCategory");
+    if (chip) { chip.style.display = "none"; chip.textContent = ""; }
+    this.category = "general";
+    this.categoryLabel = "";
+
     // 思考中占位（首个 delta 到达且思考时长满足后才替换为正文区）
+    // 初始副标题对应「第一层：类型识别」，type 事件到达后再切换文案
     const body = $("streamBody");
     body.className = "stream-body thinking";
     body.innerHTML =
@@ -770,11 +779,37 @@ const AI_STREAM = {
         '<span class="think-dots"><i></i><i></i><i></i></span>' +
         '<span class="think-text">AI 思考中</span>' +
       '</div>' +
-      '<p class="think-hint">正在阅读笔记、提炼核心要点、生成行动建议…</p>';
+      '<p class="think-hint">第一步：正在识别笔记类型（代码 / 学习 / 日记 / 长文本）…</p>';
 
-    this.setStatus("thinking", "AI 正在阅读笔记、整理思路…");
+    this.setStatus("thinking", "AI 正在识别笔记类型…");
     this.renderActions("running");
     $("streamOverlay").classList.add("show");
+  },
+
+  /** 更新思考态副标题（仅当面板仍处于思考态时有效） */
+  setThinkingHint(msg) {
+    const el = document.querySelector("#streamBody .think-hint");
+    if (el) el.textContent = msg;
+  },
+
+  /** SSE「classifying」事件：第一层类型识别开始 */
+  onClassifying() {
+    this.setThinkingHint("第一步：正在识别笔记类型（代码 / 学习 / 日记 / 长文本）…");
+    this.setStatus("thinking", "AI 正在识别笔记类型…");
+  },
+
+  /** SSE「type」事件：第一层识别完成，显示类型 chip 并进入第二层润色等待 */
+  onType(ev) {
+    this.category = ev.category || "general";
+    this.categoryLabel = ev.label || "普通笔记";
+    const chip = $("streamCategory");
+    if (chip) {
+      chip.textContent = "🏷 " + this.categoryLabel;
+      chip.className = "stream-cat cat-" + this.category;
+      chip.style.display = "";
+    }
+    this.setThinkingHint("已识别为「" + this.categoryLabel + "」，正在按对应风格润色…");
+    this.setStatus("thinking", "已识别为「" + this.categoryLabel + "」，AI 正在润色…");
   },
 
   /** 重置状态（关闭 / 重试前调用） */
@@ -791,6 +826,8 @@ const AI_STREAM = {
     this.pendingDone = null;
     this.thinkingStartedAt = 0;
     this.bufferedFirstText = "";
+    this.category = "general";
+    this.categoryLabel = "";
   },
 
   /**
@@ -863,6 +900,8 @@ const AI_STREAM = {
         }
       }
       this.networkEnded = true;
+      // 流已自然读完，解除控制器引用，避免关闭面板时对已完成连接再 abort 产生控制台报错
+      this.ac = null;
       // 服务器正常关闭却没给 done/error（异常断流）→ 友好提示，不入库
       if (this.state === "running" && !this.pendingDone) {
         this.fail("流式连接意外中断，请重试", "network");
@@ -893,10 +932,10 @@ const AI_STREAM = {
       if (this.queueChars.length === 0 && this.textNode) this.completeDone();
     }
     else if (ev.type === "error") this.fail(ev.message || "AI 生成失败", ev.stage || "ai");
-    // start 事件：AI 已开始思考（后端已通过归属校验，请求大模型中），刷新思考状态文案
-    else if (ev.type === "start") {
-      this.setStatus("thinking", "AI 已读取笔记，正在调用大模型思考…");
-    }
+    // 第一层推理开始：正在识别笔记类型
+    else if (ev.type === "classifying") this.onClassifying();
+    // 第一层推理结果：携带 category/label，展示类型 chip
+    else if (ev.type === "type") this.onType(ev);
   },
 
   /** 把思考占位替换成正文区（文本节点 + 闪烁光标） */
@@ -992,7 +1031,11 @@ const AI_STREAM = {
     // 光标替换成收尾标记
     const caret = $("streamBody").querySelector(".stream-caret");
     if (caret) caret.remove();
-    this.setStatus("done", "✅ 已完成，润色稿已自动保存为一条【新笔记】（原笔记未改动）");
+    // 完成文案带上第一层识别出的笔记类型
+    const label = ev.label || this.categoryLabel || "";
+    this.setStatus("done", label
+      ? "✅ 已完成（" + label + "），润色稿已自动保存为一条【新笔记】（原笔记未改动）"
+      : "✅ 已完成，润色稿已自动保存为一条【新笔记】（原笔记未改动）");
     this.renderActions("done");
     showToast("AI 润色完成，已新建笔记 ✿");
     // 拉取最新列表（新笔记由后端写入，带后端返回的 objectId）
