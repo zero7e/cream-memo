@@ -359,7 +359,7 @@ function compressImageToDataURL(file) {
  * 基于轻量 NLP：意图识别 + 实体提取 + 动态拼装
  * 两套能力共用同一组共享分析工具：
  *   · analyzeAndGenerate()  — 从一句话想法生成结构化备忘
- *   · summarizeAndPolish()  — 读取已有笔记，提炼要点 + 结构化整理
+ *   · 本地智能引擎（6.4 节）— 纯静态环境降级：类型识别 + 分类润色
  *
  * 替换为真实大模型的方法（已预留完整接口）：
  *   将 generateAIMemo() 中的生成逻辑替换为：
@@ -377,7 +377,7 @@ function compressImageToDataURL(file) {
  *   const result = JSON.parse(resp.body).result;
  *   // 从 result 中提取标题和正文
  *
- *   AI 总结润色同理：把 summarizeAndPolish() 换成大模型调用，
+ *   AI 总结润色同理：把本地智能引擎换成大模型调用，
  *   prompt 示例："总结润色以下笔记，输出核心要点和下一步建议：<原文>"
  */
 
@@ -664,58 +664,192 @@ function generateAIMemo() {
   }, 900);
 }
 
+/* ==========================================================================
+   6.4 浏览器本地智能引擎（纯静态托管环境降级用，逻辑逐行对齐 server/sse_server.py）
+   ──────────────────────────────────────────────────────────────────────────
+   GitHub Pages 等静态环境跑不了 Python 后端，点「润色」时由这里接管：
+   第一层识别笔记类型（代码/学习/日记/长文本/普通）→ 第二层按类型用
+   去模板化策略生成结果，全程复用流式弹窗的识别动画 / 类型 chip / 打字机。
+   ========================================================================== */
+
+/* 类型 key → 中文标签（与后端 CATEGORY_LABELS 一致） */
+const LOCAL_CATEGORY_LABELS = {
+  code: "代码笔记", study: "学习笔记", diary: "日常随笔/日记",
+  long: "长文本笔记", general: "普通笔记",
+};
+const LOCAL_LONG_NOTE_CHARS = 400; // 与后端 LONG_NOTE_CHARS 一致
+
 /**
- * AI 总结润色引擎
- * 读取已有笔记，提炼核心要点 → 结构化整理 → 给出下一步建议
- * 不改写原意，只做「要点提炼 + 结构化 + 行动建议」
- *
- * @param   {string} title   - 原标题
- * @param   {string} content - 原内容
- * @returns {{title: string, content: string}} 润色后的标题和内容
+ * 本地启发式分类器（与后端 classify_local 同规则，保证两端识别结果一致）
+ * 判定优先级：代码 > 学习 > 日记 > 长文本 > 普通
  */
-function summarizeAndPolish(title, content) {
-  const text = ((title || "") + " " + (content || "")).trim();
+function classifyNoteLocal(title, content) {
+  const text = ((title || "") + "\n" + (content || "")).trim();
+  if (!text) return "general";
 
-  // 复用共享语义分析：意图 / 关键词 / 时间词
-  const intentConfig = detectIntent(text);
-  const core = extractCoreKeyword(text);
-  const timeTip = findTimeTip(text);
-
-  // 1. 从原内容提炼要点：按行/标点切分 → 去序号与空白 → 去重 → 最多 4 条
-  const rawLines = (content || "").split(/\n|。|；|;|！|!|？|\?/)
-    .map(s => s.replace(/^[\s\d.、·•\-–—*#]+/, "").trim())
-    .filter(s => s.length >= 4);
-  const points = [];
-  for (const line of rawLines) {
-    // 开头 4 字相同视为重复句，跳过
-    if (points.some(p => p.slice(0, 4) === line.slice(0, 4))) continue;
-    points.push(line.length > 30 ? line.slice(0, 30) + "…" : line);
-    if (points.length >= 4) break;
+  // 1) 代码笔记：markdown 代码围栏是最强信号
+  if (text.includes("```")) return "code";
+  const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
+  // 代码行特征（覆盖 Python / JS / Java / C 系常见写法）
+  const codeLineRe = /^(def |class |function |const |let |var |import |from .+ import |print\(|console\.log|return |if\s*\(|for\s*\(|while\s*\(|public |private |protected |async |await |#include|package |\}|\{|.*=>.*|.*[a-zA-Z_]\w*\s*=\s*function)/;
+  let codeHits = 0;
+  for (const l of lines) {
+    if (codeLineRe.test(l)) codeHits++;
+    else if (l.endsWith(";") && /[{}()=;]/.test(l)) codeHits++;
   }
-  // 原文太碎提不出要点 → 用原标题兜底
-  if (points.length === 0) {
-    points.push((title || "").trim().slice(0, 30) || core);
+  // 至少 2 行像代码，或代码行占比超过 1/3
+  if (codeHits >= 2 && (lines.length <= 4 || codeHits / Math.max(lines.length, 1) >= 0.3)) {
+    return "code";
   }
 
-  // 2. 下一步建议：取该意图类型的前 3 个行动模板（引用核心关键词）
-  const steps = STEP_TEMPLATES[intentConfig.name].slice(0, 3)
-    .map(tpl => tpl.replace("{obj}", core));
+  // 2) 学习笔记：学习场景关键词
+  const studyWords = ["考点", "知识点", "复习", "预习", "章节", "公式", "定义", "定理",
+    "背诵", "单词", "题目", "考试", "课程", "网课", "作业", "论文",
+    "学习", "笔记整理", "归纳", "思维导图"];
+  if (studyWords.some(w => text.includes(w))) return "study";
 
-  // 3. 润色标题：按标签加 emoji 前缀，过长截断
-  const tagEmoji = { "工作": "💼", "生活": "🏡", "学习": "📚", "灵感": "✨" }[intentConfig.tag] || "📝";
-  let newTitle = (title || "").trim() || core;
-  if (newTitle.length > 14) newTitle = newTitle.slice(0, 14) + "…";
-  newTitle = tagEmoji + " " + newTitle;
-
-  // 4. 拼装润色内容
-  let polished = "✨ AI 润色整理\n\n";
-  polished += "📌 核心要点：\n" + points.map((p, i) => `${i + 1}. ${p}`).join("\n");
-  polished += "\n\n🎯 下一步建议：\n" + steps.map((s, i) => `${i + 1}. ${s}`).join("\n");
-  if (timeTip) {
-    polished += `\n\n⏰ 时间提示：${timeTip}`;
+  // 3) 日常随笔/日记：第一人称生活记录 + 情绪/时间词，且篇幅不长
+  const diaryWords = ["今天", "今日", "心情", "好开心", "好难过", "日记", "有点", "觉得自己",
+    "早上起床", "下班", "放学", "周末和", "突然觉得", "好烦", "好幸福"];
+  if (diaryWords.some(w => text.includes(w)) && text.includes("我")
+      && text.length < LOCAL_LONG_NOTE_CHARS) {
+    return "diary";
   }
 
-  return { title: newTitle, content: polished };
+  // 4) 长文本普通笔记：篇幅够长又不属于上面三类
+  if (text.length >= LOCAL_LONG_NOTE_CHARS) return "long";
+
+  // 5) 兜底
+  return "general";
+}
+
+/** 轻量清理（日记/通用共用）：合并多余空白、去句首口语填充词，不改写句子不加结构 */
+function localLightClean(content, fallback) {
+  let body = (content || "").trim();
+  body = body.replace(/[ \t]{2,}/g, " ").replace(/\n{3,}/g, "\n\n");
+  const fillers = ["那个，", "就是说，", "嗯，", "呃，", "额，"];
+  body = body.split("\n").map(line => {
+    let s = line.trim();
+    for (const f of fillers) {
+      if (s.startsWith(f)) { s = s.slice(f.length); break; }
+    }
+    return s;
+  }).join("\n").trim();
+  return body || fallback;
+}
+
+/** 按标点/换行切句，去序号与空白，返回有意义的原句列表（不改编、不编造） */
+function localSentences(content, minLen) {
+  minLen = minLen || 4;
+  return (content || "").split(/[\n。！？!?；;]+/)
+    .map(s => s.replace(/^[\s\d.、·•\-–—*#①②③④⑤⑥⑦⑧⑨（）()]+/, "").trim())
+    .filter(s => s.length >= minLen);
+}
+
+/** 按开头 6 字去重（长文本常含重复表述），保留首次出现的句子 */
+function localDedupe(sentences, limit) {
+  const result = [], heads = new Set();
+  for (const s of sentences) {
+    const head = s.slice(0, 6);
+    if (heads.has(head)) continue;
+    heads.add(head);
+    result.push(s);
+    if (limit && result.length >= limit) break;
+  }
+  return result;
+}
+
+/** 单条要点过长时截断并补省略号 */
+function localTrim(s, width) {
+  return s.length > width ? s.slice(0, width) + "…" : s;
+}
+
+/* 学习笔记中疑似「考点」的线索词（只用于从原句里挑重点，不生成套话） */
+const LOCAL_EXAM_KEYWORDS = ["考", "重点", "区别", "易错", "原理", "公式", "定义", "概念",
+  "对比", "必须", "注意", "掌握", "核心"];
+
+/** 代码笔记：保留围栏代码原文不动，给定义补极简注释；文字说明只取前两句 */
+function localCodeResult(title, content) {
+  content = content || "";
+  // 带捕获组 split：奇数段是围栏内代码，偶数段是普通文字（与后端一致）
+  const parts = content.split(/```[^\n]*\n?([\s\S]*?)```/);
+  const prose = [], blocks = [];
+  parts.forEach((seg, i) => (i % 2 ? blocks : prose).push(seg.trim()));
+
+  // 代码块补注释：Python 用 #，类 C/JS 用 //，依据块内特征猜测
+  const commented = [];
+  for (const code of blocks) {
+    const isPy = /^\s*(def |import |from |print\()/m.test(code);
+    const cmt = isPy ? "#" : "//";
+    const out = [];
+    for (const line of code.split("\n")) {
+      const m = line.trim().match(/^(def |class |function |(?:const|let|var)\s+)([\u4e00-\u9fff\w]*)/);
+      const last = out.length ? out[out.length - 1].trim() : "";
+      // 上一行为空（或块首）且不是已有注释时，给定义补一行极简注释
+      if (m && (out.length === 0 || last === "") && !last.startsWith(cmt)) {
+        out.push(cmt + " " + ({ "def": "函数", "class": "类", "function": "函数" }[m[1].trim()] || "逻辑块"));
+      }
+      out.push(line);
+    }
+    commented.push(out.join("\n").replace(/\n+$/, ""));
+  }
+
+  // 代码外文字：按句切，取前两句作为简短说明
+  const proseText = prose.filter(Boolean).join(" ");
+  const sentences = proseText.split(/[。！？\n]/).map(s => s.trim()).filter(s => s.length >= 4);
+  const notes = sentences.length > 0
+    ? sentences.slice(0, 2)
+    : ["代码逻辑已检查，补充了关键注释，原有功能保持不变。"];
+
+  const t = ((title || "").trim() || "代码笔记").slice(0, 14);
+  let body = notes.map(s => "· " + s).join("\n");
+  for (const cb of commented) body += "\n\n```\n" + cb + "\n```";
+  return "💻 " + t + "\n\n" + body;
+}
+
+/** 学习笔记：从原句摘选「核心知识点」+ 挑含考点线索词的句子，不加总结套话 */
+function localStudyResult(title, content) {
+  const sents = localDedupe(localSentences(content), 8);
+  let points = sents.slice(0, 5).map(s => localTrim(s, 42));
+  if (points.length === 0) points = ["原文信息较少，建议补充更具体的知识点后再整理。"];
+  const pointSet = new Set(points);
+  const exam = sents.filter(s => LOCAL_EXAM_KEYWORDS.some(k => s.includes(k)))
+    .slice(0, 4).map(s => localTrim(s, 42))
+    .filter(s => !pointSet.has(s)).slice(0, 3);
+
+  let body = "核心知识点：\n" + points.map((p, i) => (i + 1) + ". " + p).join("\n");
+  if (exam.length > 0) body += "\n\n重点考点：\n" + exam.map(s => "· " + s).join("\n");
+  return "📚 " + (((title || "").trim() || "学习笔记").slice(0, 14)) + "\n\n" + body;
+}
+
+/** 长文本：切句去重后提炼核心要点，全部来自原文，不加固定总结话术 */
+function localLongResult(title, content) {
+  const sents = localDedupe(localSentences(content), 8);
+  let points = sents.slice(0, 6).map(s => localTrim(s, 46));
+  if (points.length === 0) points = [localTrim((title || "").trim() || "长文本笔记", 46)];
+  const body = "核心要点：\n" + points.map((p, i) => (i + 1) + ". " + p).join("\n");
+  return "📄 " + (((title || "").trim() || "长文本笔记").slice(0, 14)) + "\n\n" + body;
+}
+
+/** 日记：只做轻清理，保留情绪与口吻，不强行结构化 */
+function localDiaryResult(title, content) {
+  const body = localLightClean(content, (title || "").trim());
+  return "📔 " + (((title || "").trim() || "随手记").slice(0, 14)) + "\n\n" + body;
+}
+
+/** 兜底通用：与日记同样只做轻清理，不套固定结构，保持原文风格 */
+function localGeneralResult(title, content) {
+  const body = localLightClean(content, (title || "").trim());
+  return "📝 " + (((title || "").trim() || "笔记").slice(0, 14)) + "\n\n" + body;
+}
+
+/** 按识别出的类型分发生成（与后端 build_mock_result 一致） */
+function buildLocalResult(title, content, category) {
+  const builders = {
+    code: localCodeResult, study: localStudyResult, diary: localDiaryResult,
+    long: localLongResult, general: localGeneralResult,
+  };
+  return (builders[category] || localGeneralResult)(title, content);
 }
 
 /* ==========================================================================
@@ -731,7 +865,7 @@ function summarizeAndPolish(title, content) {
      · AbortController 一键中断 → 后端检测断连，绝不写 Bmob（无脏数据）
      · 超时 / AI 报错 / 超长只收到 error 帧，同样不入库
      · 本地 Python 服务不可达时（如 GitHub Pages 纯静态环境），
-       自动降级为浏览器内置 summarizeAndPolish 整理，功能不瘫痪
+       自动降级为浏览器内置本地智能引擎（6.4 节），在弹窗内完成全流程
    ========================================================================== */
 
 const AI_STREAM = {
@@ -828,6 +962,7 @@ const AI_STREAM = {
     this.bufferedFirstText = "";
     this.category = "general";
     this.categoryLabel = "";
+    this._clearLocalTimer(); // 停掉本地引擎的模拟流定时器（如有）
   },
 
   /**
@@ -1072,12 +1207,105 @@ const AI_STREAM = {
     this.renderActions("error");
   },
 
-  /** 本地服务不可达 → 关闭面板，降级为浏览器内置整理（旧流程） */
+  /** 本地服务不可达（纯静态托管）→ 不关弹窗，切换为浏览器内置智能引擎继续跑 */
   fallbackLocal(reason) {
+    showToast(reason + "，已切换浏览器本地整理");
+    this.runLocal();
+  },
+
+  /**
+   * 浏览器本地智能润色（纯静态环境降级，6.4 节引擎）
+   * 与服务端 SSE 流程同节奏：识别类型 → 类型 chip → 模拟流式输出 → 新建笔记
+   */
+  runLocal() {
     const id = this.noteId;
-    this.close();
-    showToast(reason + "，已切换本地整理模式");
-    localPolishFallback(id);
+    if (!id) return;
+    const sourceTitle = ($("streamSource").textContent || "").replace(/^原笔记：/, "");
+    this.reset();
+    this.open(id, sourceTitle);
+    this._localRun(id);
+  },
+
+  /** 本地流程主体：云端归属校验 → 类型识别 → 模拟流式 → 入库 */
+  async _localRun(id) {
+    // 云端归属校验：getById 的 where 同时要求 objectId + username，他人笔记查不到
+    const memo = await MemoDAO.getById(id);
+    if (this.state !== "running") return; // 等待期间用户已关闭面板
+    if (!memo) {
+      this.handleFrame('data: ' + JSON.stringify(
+        { type: "error", stage: "request", message: "该笔记不存在、已被删除或无权访问" }));
+      return;
+    }
+    const title = memo.title || "";
+    const content = memo.content || "";
+    if (!title.trim() && !content.trim()) {
+      this.handleFrame('data: ' + JSON.stringify(
+        { type: "error", stage: "request", message: "这条备忘还没有内容，先写点什么再润色吧" }));
+      return;
+    }
+    if (title.length + content.length > 6000) { // 与后端 MAX_INPUT_CHARS 一致
+      this.handleFrame('data: ' + JSON.stringify(
+        { type: "error", stage: "too_long", message: "原文过长（超过 6000 字），请先精简原文" }));
+      return;
+    }
+
+    // 第一层：识别笔记类型（模拟服务端 classifying → type 事件节奏）
+    this.handleFrame('data: ' + JSON.stringify({ type: "classifying" }));
+    await new Promise(r => setTimeout(r, 600));
+    if (this.state !== "running") return;
+    const category = classifyNoteLocal(title, content);
+    this.handleFrame('data: ' + JSON.stringify(
+      { type: "type", category: category, label: LOCAL_CATEGORY_LABELS[category] || "普通笔记" }));
+    await new Promise(r => setTimeout(r, 650));
+    if (this.state !== "running") return;
+
+    // 第二层：按类型生成结果，切成小片模拟流式推送
+    const full = buildLocalResult(title, content, category);
+    this._localStreamText(full, id);
+  },
+
+  /** 把完整结果按 3 字/35ms 模拟打字流喂给 handleFrame（复用全部既有展示逻辑） */
+  _localStreamText(full, id) {
+    const chars = Array.from(full); // 按码点切，emoji 不会被截断
+    let i = 0;
+    this._localTimer = setInterval(() => {
+      if (this.state !== "running") { this._clearLocalTimer(); return; }
+      const piece = chars.slice(i, i + 3).join("");
+      i += 3;
+      if (piece) this.handleFrame('data: ' + JSON.stringify({ type: "delta", text: piece }));
+      if (i >= chars.length) {
+        this._clearLocalTimer();
+        this._localFinish(full, id);
+      }
+    }, 35);
+  },
+
+  _clearLocalTimer() {
+    if (this._localTimer) { clearInterval(this._localTimer); this._localTimer = null; }
+  },
+
+  /** 流式播完后：新建独立笔记入库（绝不覆盖原文），成功/失败转成对应 SSE 帧 */
+  async _localFinish(full, id) {
+    // 与服务端一致：第 1 行是标题（含 emoji），其余是正文
+    const nl = full.indexOf("\n");
+    const newTitle = (nl === -1 ? full : full.slice(0, nl)).trim() || "AI 润色笔记";
+    const newContent = nl === -1 ? "" : full.slice(nl + 1).trim();
+    try {
+      const src = memoList.find(m => m.objectId === id) || {};
+      const created = await MemoDAO.create({
+        title: newTitle, content: newContent, isFinish: false,
+        imgUrl: "", username: currentUser, tag: src.tag || "",
+      });
+      if (this.state !== "running") return; // 面板已关：新笔记已入库，保留即可
+      this.handleFrame('data: ' + JSON.stringify({
+        type: "done", objectId: (created && created.objectId) || "",
+        title: newTitle, category: this.category, label: this.categoryLabel,
+      }));
+    } catch (e) {
+      if (this.state !== "running") return;
+      this.handleFrame('data: ' + JSON.stringify(
+        { type: "error", stage: "save", message: (e && e.message) || "保存到云端失败，请重试" }));
+    }
   },
 
   /** 关闭面板（运行中关闭视同中断） */
@@ -1106,7 +1334,7 @@ const AI_STREAM = {
       // aborted / error：可重试、可降级本地整理、可关闭
       box.innerHTML =
         '<button class="btn-mini btn-retry" onclick="retryPolish()">🔁 重试</button>' +
-        '<button class="btn-mini btn-local" onclick="localPolishFallback(AI_STREAM.noteId);AI_STREAM.close()">📝 本地整理</button>' +
+        '<button class="btn-mini btn-local" onclick="AI_STREAM.runLocal()">📝 本地整理</button>' +
         '<button class="btn-mini btn-del" onclick="AI_STREAM.close()">关闭</button>';
     }
   }
@@ -1133,32 +1361,6 @@ function retryPolish() {
   if (!id) { AI_STREAM.close(); return; }
   AI_STREAM.open(id, $("streamSource").textContent.replace(/^原笔记：/, ""));
   AI_STREAM.connect(id);
-}
-
-/**
- * 本地降级整理（无 Python 服务时使用）：云端归属校验 → 内置引擎生成 → 预填表单
- * 用户检查满意后手动点「保存修改」，点「取消」则放弃，原文不受影响
- * @param {string} id - 备忘 ID
- */
-async function localPolishFallback(id) {
-  const m = await withLoading(() => MemoDAO.getById(id));
-  if (!m) {
-    showToast("该笔记不存在、已被删除或无权访问");
-    memoList = memoList.filter(x => x.objectId !== id);
-    renderList();
-    return;
-  }
-  if (!(m.title || "").trim() && !(m.content || "").trim()) {
-    showToast("这条备忘还没有内容，先写点什么再润色吧");
-    return;
-  }
-  enterEditMode(m);
-  const polished = summarizeAndPolish(m.title || "", m.content || "");
-  $("titleInput").value = polished.title;
-  $("contentInput").value = polished.content;
-  $("titleInput").focus();
-  window.scrollTo({ top: 0, behavior: "smooth" });
-  showToast("AI 已本地总结润色，检查满意后点「保存修改」✿");
 }
 
 
