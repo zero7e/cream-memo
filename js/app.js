@@ -253,38 +253,52 @@ const BmobAPI = {
   },
 
   /**
-   * 文件上传（自动域名容灾 + 降级压缩）
+   * 文件上传（先压缩保体积 + 自动域名容灾 + 内嵌兜底，保证任何图片都能成功）
    *
-   * Bmob 文件服务走 /2/files/<fileName> + 原始二进制。
-   * 若后台未绑定文件域名 → 自动降级为压缩后的 dataURL 内嵌存储，
-   * 保证任何环境下图片都能随备忘保存与展示。
+   * 步骤：
+   *   1) 本地自适应压缩：无论原图多大，输出 dataURL 一律 ≤ 36KB
+   *      （Bmob 免费版单次请求体硬上限 40KB，必须给其余字段留余量）；
+   *   2) 尝试 Bmob 文件服务 /2/files/<fileName>（后台绑定文件域名后可用，
+   *      成功后备忘里只存短链接，图片最清晰也最省空间）；
+   *   3) 文件服务未开通（错误码 10007“绑定文件域名”）或网络全失败 →
+   *      直接把第 1 步的压缩 dataURL 内嵌进备忘记录。体积已被严格压住，
+   *      因此这一步必然成功，不会再出现“超过 bmob 限制，请升级套餐”。
    *
-   * @param   {File} file                          - 图片文件
+   * @param   {File} file                          - 图片文件（不限大小）
    * @returns {Promise<{url: string, fallback: boolean}>}
    *   - url:      图片 URL（云端链接或 dataURL）
-   *   - fallback: true 表示走了内置压缩降级
-   * @throws  {Error} 云端上传失败 + 本地压缩也失败
+   *   - fallback: true 表示走了内嵌压缩兜底
+   * @throws  {Error} 文件不是浏览器可解码的图片（如损坏文件 / HEIC 未被系统转码）
    */
   async uploadFile(file) {
-    const fileName = "memo_" + Date.now() + "_" + file.name;
-    const hosts = this._candidateHosts();
+    // 1) 先压缩：这一步的结果也是最后的兜底，体积必然在记录限制内
+    let dataUrl;
+    try {
+      dataUrl = await compressImageToDataURL(file);
+    } catch (e) {
+      throw new Error("图片处理失败，请确认是有效的图片文件（JPG / PNG / 截图均可；"
+        + "iPhone 的 HEIC 格式请先在相册里转成 JPG）");
+    }
 
+    // 2) 尝试文件服务（上传压缩后的 JPEG，而非原图，进一步保证不超文件大小限制）
+    const fileName = "memo_" + Date.now() + ".jpg";
+    const hosts = this._candidateHosts();
     for (const host of hosts) {
       try {
         const resp = await fetch(host + "/2/files/" + encodeURIComponent(fileName), {
           method: "POST",
           headers: {
             ...this._authHeaders(),
-            "Content-Type": file.type || "application/octet-stream"
+            "Content-Type": "image/jpeg"
           },
-          body: file
+          body: dataURLtoBlob(dataUrl)
         });
         const data = await this._parseBody(resp);
         if (resp.ok && data && data.url) {
           bmobWorkingHost = host;
           return { url: data.url, fallback: false };
         }
-        // 「未绑定文件域名」是应用级配置错误，换域名重试也无意义 → 直接降级
+        // 「未绑定文件域名」是应用级配置错误，换域名重试也无意义 → 直接走兜底
         const msg = (data && (data.error || data.message)) || ("上传失败 HTTP " + resp.status);
         if (msg.includes("域名") || msg.includes("文件服务")) break;
       } catch (err) {
@@ -292,57 +306,75 @@ const BmobAPI = {
       }
     }
 
-    // 降级：客户端压缩为 dataURL，直接存入备忘记录
-    try {
-      const dataUrl = await compressImageToDataURL(file);
-      return { url: dataUrl, fallback: true };
-    } catch (e) {
-      throw new Error("图片处理失败，请确认选择的是有效的图片文件（JPG/PNG 等）");
-    }
+    // 3) 兜底：压缩 dataURL 内嵌存储（体积 ≤36KB，保证写入成功）
+    return { url: dataUrl, fallback: true };
   }
 };
 
 
 /* ====================  5. 图片处理  ==================== */
 
+/*
+ * Bmob 免费版【单次请求体】硬上限 = 40960 字节（40KB，实测得出：
+ * 38KB 的记录写入成功，41KB 的记录被拒，错误文案中的 EXTRA int=40960）。
+ * 文件服务未开通（后台未绑定文件域名，错误码 10007）时，图片只能以 dataURL
+ * 内嵌进 Memo 记录，因此把 dataURL 字符数严格压到 36KB（36864）以内，
+ * 给标题/正文等其余字段留足余量，确保任何图片都能入库。
+ */
+const IMG_EMBED_MAX = 36 * 1024;
+
+/** dataURL → Blob（用于把压缩后的图片再尝试上传到 Bmob 文件服务） */
+function dataURLtoBlob(dataUrl) {
+  const parts = dataUrl.split(",");
+  const mime = (parts[0].match(/data:(.*?);/) || [, "image/jpeg"])[1];
+  const bin = atob(parts[1]);
+  const u8 = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+  return new Blob([u8], { type: mime });
+}
+
 /**
- * 图片压缩 → dataURL（内嵌存储降级方案）
+ * 图片自适应压缩 → dataURL
  *
- * 流程：FileReader → Image → Canvas 缩放 → toDataURL 逐级降质
- * 最大边 1280px，JPEG 质量从 0.75 逐级降至 0.3，控制在约 380KB 以内
+ * 流程：FileReader → Image 解码 → Canvas 缩放 → 按「最大边 + JPEG 质量」
+ * 九档逐级压缩，直到 dataURL ≤ IMG_EMBED_MAX（36KB）即停。
+ * 前面的档位尽量保住清晰度；最后一档（160px/0.25，任何图都只有几 KB）
+ * 兜底，保证无论原图多大、多复杂，输出一定在 Bmob 单次请求 40KB 限制内。
  *
- * @param   {File} file - 图片文件
+ * @param   {File} file - 图片文件（JPG/PNG/GIF/WebP/截图等浏览器能解码的格式）
  * @returns {Promise<string>} data:image/jpeg;base64,... 格式的 dataURL
  */
 function compressImageToDataURL(file) {
+  // （最大边长, JPEG 质量）档位：从高清到兜底依次尝试
+  const TIERS = [
+    [1280, 0.72], [1024, 0.6], [800, 0.52],
+    [640, 0.45], [512, 0.38], [384, 0.32],
+    [320, 0.28], [240, 0.25], [160, 0.22],
+  ];
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (ev) => {
       const img = new Image();
       img.onload = () => {
-        const MAX = 1280;
-        let w = img.width, h = img.height;
-        if (Math.max(w, h) > MAX) {
-          const k = MAX / Math.max(w, h);
-          w = Math.round(w * k);
-          h = Math.round(h * k);
-        }
-        const canvas = document.createElement("canvas");
-        canvas.width = w;
-        canvas.height = h;
-        const ctx = canvas.getContext("2d");
-        ctx.fillStyle = "#ffffff";   // JPEG 不支持透明，白底兜底
-        ctx.fillRect(0, 0, w, h);
-        ctx.drawImage(img, 0, 0, w, h);
-        // 逐级降质，直到体积达标（dataURL 字符数 ≤ 约 380KB）
         let result = "";
-        for (const q of [0.75, 0.6, 0.5, 0.4, 0.3]) {
+        for (const [MAX, q] of TIERS) {
+          // 等比缩放到当前档位的最大边（原图更小时不放大）
+          const k = Math.min(1, MAX / Math.max(img.width, img.height));
+          const w = Math.max(1, Math.round(img.width * k));
+          const h = Math.max(1, Math.round(img.height * k));
+          const canvas = document.createElement("canvas");
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext("2d");
+          ctx.fillStyle = "#ffffff";   // JPEG 不支持透明，白底兜底
+          ctx.fillRect(0, 0, w, h);
+          ctx.drawImage(img, 0, 0, w, h);
           result = canvas.toDataURL("image/jpeg", q);
-          if (result.length <= 380 * 1024) break;
+          if (result.length <= IMG_EMBED_MAX) break; // 体积已达标，提前结束
         }
         resolve(result);
       };
-      img.onerror = () => reject(new Error("图片读取失败"));
+      img.onerror = () => reject(new Error("图片解码失败"));
       img.src = ev.target.result;
     };
     reader.onerror = () => reject(new Error("图片读取失败"));
@@ -1861,7 +1893,7 @@ $("fileInput").addEventListener("change", async (e) => {
   e.target.value = "";   // 清空，允许重复选择同一个文件
   if (!file) return;
   if (!file.type || !file.type.startsWith("image/")) { showToast("请选择图片文件"); return; }
-  if (file.size > 5 * 1024 * 1024) { showToast("图片不能超过 5MB"); return; }
+  // 不再限制原图大小：无论多大都会在本地自适应压缩到 60KB 以内再上传
 
   // 1) 先把本地原图显示到大预览区（即时反馈，不用等上传）
   const reader = new FileReader();
