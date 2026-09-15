@@ -95,6 +95,29 @@
   --btn-del-t: #fff;
 }
 
+/*
+ * 暗色模式（一套暗色系皮肤，独立于上面 6 套亮色：亮暗切换只换本变量集）
+ * 触发：<html data-mode="dark">（由 head 内联脚本在首屏渲染前写入，防闪烁）
+ * 注意：亮色变量声明在 body[data-theme] 上，元素自身声明会盖过从 <html>
+ * 继承的值，所以暗色变量必须同时落到 body（特异性 0,1,1 > 0,1,0）。
+ */
+[data-mode="dark"],
+[data-mode="dark"] body {
+  --bg:        #15121d;   /* 页面底色：墨紫黑 */
+  --card:      #231f31;   /* 卡片/容器：抬升一档 */
+  --primary:   #f5b73f;   /* 主色保留暖琥珀，暗色下更醒目 */
+  --accent:    #ff7a90;
+  --text:      #f1ecdd;
+  --text-l:    #a99fc0;
+  --border:    #06050b;
+  --shadow:    #000000;
+  --done-bg:   #2d2840;
+  --btn-del:   #ff5b5b;
+  --btn-del-t: #fff;
+  --field:     #2d2940;   /* 输入框/内嵌面板：再抬一档 */
+  color-scheme: dark;     /* 让滚动条/原生控件也进入暗色 */
+}
+
 /* ---- 2. 基础重置 & 全局 ---- */
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
@@ -143,7 +166,7 @@ body {
 }
 .btn-logout:hover { transform: translate(-1px,-1px); box-shadow: 3px 3px 0 var(--shadow); }
 .btn-logout:active { transform: translate(2px,2px); box-shadow: 0 0 0 var(--shadow); }
-.theme-switch { display: flex; gap: 6px; }
+.theme-switch { display: flex; gap: 6px; align-items: center; }
 .theme-dot {
   width: 22px;
   height: 22px;
@@ -153,6 +176,26 @@ body {
   transition: transform 0.15s;
 }
 .theme-dot:hover { transform: scale(1.15); }
+/* 亮 / 暗模式一键切换（图标=点击后将要进入的模式：亮色时显月亮，暗色时显太阳） */
+.mode-toggle {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  background: var(--card);
+  font-size: 15px;
+  line-height: 1;
+  padding: 0;
+  margin-right: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 2px 2px 0 var(--shadow);
+  transition: transform 0.15s;
+}
+.mode-toggle:hover { transform: scale(1.12); }
+.mode-toggle:active { transform: translate(1px,1px); box-shadow: 0 0 0 var(--shadow); }
 .theme-dot[data-t="cream"]    { background: #FFE8A0; }
 .theme-dot[data-t="pink"]     { background: #FFB8D4; }
 .theme-dot[data-t="mint"]     { background: #A0E8C8; }
@@ -1021,4 +1064,71 @@ body {
 @media (min-width: 768px) {
   body { padding: 30px 16px 60px; }
   .container { padding: 34px 38px 38px; }
+}
+
+/* ---- 11. 暗色模式：硬编码浅色组件的逐项覆盖（变量已覆盖的不再重复） ---- */
+
+/* 表单输入框 / AI 输入框：用抬升一档的 --field，避免与卡片同色 */
+[data-mode="dark"] .form-card input[type="text"],
+[data-mode="dark"] .form-card textarea,
+[data-mode="dark"] .ai-row input[type="text"] {
+  background: var(--field);
+}
+/* AI 分区：浅紫虚框 → 暗色紫调 */
+[data-mode="dark"] .ai-row {
+  background: rgba(167, 139, 250, 0.12);
+  border-color: rgba(167, 139, 250, 0.5);
+}
+[data-mode="dark"] .ai-row input[type="text"] {
+  border-color: rgba(167, 139, 250, 0.5);
+}
+/* 图片格子占位底 + 编辑提示条 + 加载遮罩 */
+[data-mode="dark"] .fg-cell { background: var(--field); }
+[data-mode="dark"] .edit-bar { background: rgba(255, 255, 255, 0.06); }
+[data-mode="dark"] .loading-mask { background: rgba(10, 8, 18, 0.72); }
+/* 庆祝弹层：暖色毛玻璃 → 暗色毛玻璃 */
+[data-mode="dark"] .celebrate { background: rgba(10, 8, 18, 0.6); }
+
+/* 登录弹窗：遮罩压暗 + 输入框抬升 */
+[data-mode="dark"] .login-overlay { background: rgba(0, 0, 0, 0.55); }
+[data-mode="dark"] .login-box input[type="text"],
+[data-mode="dark"] .login-box input[type="password"] {
+  background: var(--field);
+}
+
+/* AI 流式润色面板 */
+[data-mode="dark"] .stream-overlay { background: rgba(20, 14, 40, 0.55); }
+[data-mode="dark"] .stream-close { background: var(--field); color: var(--text); }
+[data-mode="dark"] .stream-body { background: var(--field); }
+[data-mode="dark"] .stream-title,
+[data-mode="dark"] .think-text,
+[data-mode="dark"] .st-thinking { color: #a78bfa; }
+[data-mode="dark"] .think-dots i,
+[data-mode="dark"] .stream-caret { background: #a78bfa; }
+/* 类型 chip：浅色底深字 → 半透明彩底 + 高亮字 */
+[data-mode="dark"] .stream-cat,
+[data-mode="dark"] .stream-cat.cat-general {
+  background: rgba(167, 139, 250, 0.18);
+  color: #c4b5fd;
+  border-color: rgba(196, 181, 253, 0.3);
+}
+[data-mode="dark"] .stream-cat.cat-code {
+  background: rgba(91, 141, 239, 0.2);
+  color: #93c5fd;
+  border-color: rgba(147, 197, 253, 0.3);
+}
+[data-mode="dark"] .stream-cat.cat-study {
+  background: rgba(52, 192, 138, 0.18);
+  color: #6ee7b7;
+  border-color: rgba(110, 231, 183, 0.3);
+}
+[data-mode="dark"] .stream-cat.cat-diary {
+  background: rgba(244, 114, 182, 0.18);
+  color: #f9a8d4;
+  border-color: rgba(249, 168, 212, 0.3);
+}
+[data-mode="dark"] .stream-cat.cat-long {
+  background: rgba(251, 146, 60, 0.18);
+  color: #fdba74;
+  border-color: rgba(253, 186, 116, 0.3);
 }
