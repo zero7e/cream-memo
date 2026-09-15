@@ -765,6 +765,22 @@ body {
   border-radius: 999px;
 }
 
+/* 灯箱：高清大图加载中的文字提示（缩略图已先显示，不挡操作） */
+.lb-hint:empty { display: none; }
+.lb-hint {
+  position: absolute;
+  bottom: 60px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, .55);
+  color: #fff;
+  font-size: 12px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
 /* AI SSE 流式润色面板（Neo-Brutalism，与登录卡片同一套边框/硬阴影语言） */
 .stream-overlay {
   display: none;
