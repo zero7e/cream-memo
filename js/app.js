@@ -2448,7 +2448,7 @@ document.addEventListener("keydown", (e) => {
   else if (e.key === "ArrowRight") lightboxShift(1);
 });
 
-/* ---- 主题切换 ---- */
+/* ---- 主题切换（6 套亮色皮肤 + 亮/暗模式） ---- */
 
 /**
  * 切换主题配色
@@ -2465,6 +2465,60 @@ function setTheme(name) {
 /** 初始化主题（从 localStorage 读取上次选择，默认 cream） */
 function initTheme() {
   setTheme(localStorage.getItem("memo_theme") || "cream");
+}
+
+/* ===================== 暗色 / 明亮模式 =====================
+ * 手机系统式一键来回切换：
+ *  - 用户手动点过 → localStorage(memo_dark) 记住，刷新/重开都保持
+ *  - 从没点过     → 跟随系统 prefers-color-scheme，系统变了页面也跟着变
+ * 首屏是否暗色已由 index.html 的 head 内联脚本提前写好（防闪烁），
+ * 这里只负责同步按钮图标、处理点击与监听系统变化。
+ */
+
+/** 系统当前是否暗色 */
+function isSystemDark() {
+  return !!(window.matchMedia &&
+    window.matchMedia("(prefers-color-scheme: dark)").matches);
+}
+
+/**
+ * 应用亮/暗模式（只改 <html data-mode> 与按钮图标）
+ * @param {boolean} on - true=暗色 false=明亮
+ */
+function setDarkMode(on) {
+  const root = document.documentElement;
+  if (on) root.setAttribute("data-mode", "dark");
+  else root.removeAttribute("data-mode");
+
+  const btn = $("darkToggle");
+  if (btn) {
+    // 图标含义：点一下将要进入的模式（亮色时显月亮，暗色时显太阳）
+    btn.textContent = on ? "☀️" : "🌙";
+    btn.title = on ? "切换到明亮模式" : "切换到暗色模式";
+  }
+}
+
+/** 顶栏按钮：亮 ↔ 暗来回切换，并记住用户的手动选择 */
+function toggleDarkMode() {
+  const on = document.documentElement.getAttribute("data-mode") !== "dark";
+  setDarkMode(on);
+  localStorage.setItem("memo_dark", on ? "1" : "0");
+}
+
+/** 初始化暗色模式：手动选择优先，否则跟随系统；并监听系统主题变化 */
+function initDarkMode() {
+  const saved = localStorage.getItem("memo_dark");
+  setDarkMode(saved === null ? isSystemDark() : saved === "1");
+
+  if (window.matchMedia) {
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const onChange = (e) => {
+      // 用户手动选过之后就不再跟随系统（和手机逻辑一致）
+      if (localStorage.getItem("memo_dark") === null) setDarkMode(e.matches);
+    };
+    if (mq.addEventListener) mq.addEventListener("change", onChange);
+    else if (mq.addListener) mq.addListener(onChange); // 老版 Safari 兼容
+  }
 }
 
 /* ---- 登录 / 注册 ---- */
@@ -2566,6 +2620,7 @@ function isSessionExpired(e) {
  */
 (function init() {
   initTheme();
+  initDarkMode();
 
   // 多次延迟清空：覆盖浏览器（特别是 Chrome）自动填充的注入时机（300-500ms）
   clearAutoFill();
