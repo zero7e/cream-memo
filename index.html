@@ -57,7 +57,19 @@
 ================================================================================
 -->
 
-<link rel="stylesheet" href="css/style.css?v=20260920" />
+<!-- 首屏防闪烁：CSS 加载前先把亮/暗模式写到 <html>；未手动选过则跟随系统 -->
+<script>
+(function () {
+  try {
+    var saved = localStorage.getItem("memo_dark");
+    var dark = saved === "1" ||
+      (saved === null && window.matchMedia &&
+        window.matchMedia("(prefers-color-scheme: dark)").matches);
+    if (dark) document.documentElement.setAttribute("data-mode", "dark");
+  } catch (e) {}
+})();
+</script>
+<link rel="stylesheet" href="css/style.css?v=20260921" />
 </head>
 
 <body>
@@ -74,6 +86,7 @@
       <button class="btn-logout" onclick="logout()">退出</button>
     </div>
     <div class="theme-switch">
+      <button type="button" class="mode-toggle" id="darkToggle" onclick="toggleDarkMode()" title="切换暗色 / 明亮模式" aria-label="切换暗色或明亮模式">🌙</button>
       <div class="theme-dot active" data-t="cream"    onclick="setTheme('cream')"    title="奶油黄"></div>
       <div class="theme-dot"        data-t="pink"     onclick="setTheme('pink')"     title="蜜桃粉"></div>
       <div class="theme-dot"        data-t="mint"     onclick="setTheme('mint')"     title="薄荷绿"></div>
@@ -235,6 +248,6 @@
   </div>
 </div>
 
-<script src="js/app.js?v=20260920"></script>
+<script src="js/app.js?v=20260921"></script>
 </body>
 </html>
