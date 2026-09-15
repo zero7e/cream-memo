@@ -315,13 +315,23 @@ const BmobAPI = {
 /* ====================  5. 图片处理  ==================== */
 
 /*
- * Bmob 免费版【单次请求体】硬上限 = 40960 字节（40KB，实测得出：
- * 38KB 的记录写入成功，41KB 的记录被拒，错误文案中的 EXTRA int=40960）。
- * 文件服务未开通（后台未绑定文件域名，错误码 10007）时，图片只能以 dataURL
- * 内嵌进 Memo 记录，因此把 dataURL 字符数严格压到 36KB（36864）以内，
- * 给标题/正文等其余字段留足余量，确保任何图片都能入库。
+ * Bmob 免费版三个实测硬限制：
+ *   ① 单次【请求体】上限 = 40960 字节（40KB）
+ *   ② 单次【查询响应】上限 ≈ 200KB（183KB 成功、213KB 失败）
+ *   ③ 每张表【字段数】上限 = 20（原有 6 列 + imgUrl1..9 已占 15，只剩 5 列）
+ *
+ * 因此 9 张图这样存：
+ *   · 大图：imgUrl1..9 共 9 列，每列 ≤36KB，灯箱按需只拉一列（响应 ~36KB）
+ *   · 缩略图：2 张一包 JSON 塞进 thumb1..5 共 5 列，每张 ≤6KB，
+ *     一整包 ≤13KB；9 张全包 ~60KB，随列表一次读回，远低于 200KB
  */
-const IMG_EMBED_MAX = 36 * 1024;
+const IMG_EMBED_MAX = 36 * 1024;   // 大图上限
+const THUMB_MAX = 6 * 1024;       // 单张缩略图上限（2 张打包后仍 < 40KB）
+
+/** 槽位 1..9 → 缩略图打包列名（1,1,2,2,3,3,4,4,5） */
+function thumbPackCol(slot) {
+  return "thumb" + Math.ceil(slot / 2);
+}
 
 /** dataURL → Blob（用于把压缩后的图片再尝试上传到 Bmob 文件服务） */
 function dataURLtoBlob(dataUrl) {
@@ -334,18 +344,18 @@ function dataURLtoBlob(dataUrl) {
 }
 
 /**
- * 图片自适应压缩 → dataURL
+ * 图片一次解码，产出【大图 + 缩略图】两份 dataURL
  *
- * 流程：FileReader → Image 解码 → Canvas 缩放 → 按「最大边 + JPEG 质量」
- * 九档逐级压缩，直到 dataURL ≤ IMG_EMBED_MAX（36KB）即停。
- * 前面的档位尽量保住清晰度；最后一档（160px/0.25，任何图都只有几 KB）
- * 兜底，保证无论原图多大、多复杂，输出一定在 Bmob 单次请求 40KB 限制内。
+ * · 大图：九档「最大边 + JPEG 质量」从高清到兜底逐级压缩，≤36KB 即停，
+ *   最后一档 160px 保证任何图片都达标；
+ * · 缩略图：从同一已解码图片另画一张最长边 240px 的 JPEG，≤7KB
+ *   （超过则自动降到 200/160px）。
  *
- * @param   {File} file - 图片文件（JPG/PNG/GIF/WebP/截图等浏览器能解码的格式）
- * @returns {Promise<string>} data:image/jpeg;base64,... 格式的 dataURL
+ * @param   {File} file - 图片文件（大小不限，浏览器能解码即可）
+ * @returns {Promise<{big:string, thumb:string}>}
  */
-function compressImageToDataURL(file) {
-  // （最大边长, JPEG 质量）档位：从高清到兜底依次尝试
+function processImage(file) {
+  // 大图档位（最大边长, JPEG 质量）：高清 → 兜底
   const TIERS = [
     [1280, 0.72], [1024, 0.6], [800, 0.52],
     [640, 0.45], [512, 0.38], [384, 0.32],
@@ -356,23 +366,37 @@ function compressImageToDataURL(file) {
     reader.onload = (ev) => {
       const img = new Image();
       img.onload = () => {
-        let result = "";
+        // ── 1) 压大图
+        let big = "";
         for (const [MAX, q] of TIERS) {
-          // 等比缩放到当前档位的最大边（原图更小时不放大）
-          const k = Math.min(1, MAX / Math.max(img.width, img.height));
+          const k = Math.min(1, MAX / Math.max(img.width, img.height)); // 小图不放大
           const w = Math.max(1, Math.round(img.width * k));
           const h = Math.max(1, Math.round(img.height * k));
           const canvas = document.createElement("canvas");
-          canvas.width = w;
-          canvas.height = h;
+          canvas.width = w; canvas.height = h;
           const ctx = canvas.getContext("2d");
           ctx.fillStyle = "#ffffff";   // JPEG 不支持透明，白底兜底
           ctx.fillRect(0, 0, w, h);
           ctx.drawImage(img, 0, 0, w, h);
-          result = canvas.toDataURL("image/jpeg", q);
-          if (result.length <= IMG_EMBED_MAX) break; // 体积已达标，提前结束
+          big = canvas.toDataURL("image/jpeg", q);
+          if (big.length <= IMG_EMBED_MAX) break;
         }
-        resolve(result);
+        // ── 2) 压缩略图（320px 起步，极端噪点图也有 128px 兜底档）
+        let thumb = "";
+        for (const [edge, q] of [[320, 0.55], [260, 0.48], [200, 0.42], [160, 0.38], [128, 0.32]]) {
+          const k = Math.min(1, edge / Math.max(img.width, img.height));
+          const w = Math.max(1, Math.round(img.width * k));
+          const h = Math.max(1, Math.round(img.height * k));
+          const tc = document.createElement("canvas");
+          tc.width = w; tc.height = h;
+          const tctx = tc.getContext("2d");
+          tctx.fillStyle = "#ffffff";
+          tctx.fillRect(0, 0, w, h);
+          tctx.drawImage(img, 0, 0, w, h);
+          thumb = tc.toDataURL("image/jpeg", q);
+          if (thumb.length <= THUMB_MAX) break;
+        }
+        resolve({ big, thumb });
       };
       img.onerror = () => reject(new Error("图片解码失败"));
       img.src = ev.target.result;
@@ -380,6 +404,11 @@ function compressImageToDataURL(file) {
     reader.onerror = () => reject(new Error("图片读取失败"));
     reader.readAsDataURL(file);
   });
+}
+
+/** 兼容旧调用：只取大图 dataURL */
+function compressImageToDataURL(file) {
+  return processImage(file).then(r => r.big);
 }
 
 
@@ -1461,10 +1490,23 @@ function memoPath(id) {
  * 构造「无权限 / 不存在」错误（附带错误码，供调用方区分处理）
  */
 function makeNoAccessError() {
-  const err = new Error("笔记不存在、已被删除或无权访问");
+  const err = new Error("笔记不存在、已删除或无权访问");
   err.code = "NOTE_NO_ACCESS";
   return err;
 }
+
+/*
+ * 查询字段白名单：【不带大图 imgUrl1..9】
+ * 9 张大图 ~300KB 会超出查询响应 ~200KB 的限制（Bmob 直接 400）；
+ * 列表只需要文字 + 5 个缩略图打包列（9 张图共 ~60KB），
+ * 大图等灯箱打开时按字段单独拉。
+ * imgUrl 为旧版单图字段，保留在白名单里以兼容历史数据。
+ */
+const MEMO_LIST_KEYS = [
+  "objectId", "title", "content", "isFinish", "username", "tag", "imgUrl",
+  "thumb1", "thumb2", "thumb3", "thumb4", "thumb5",
+  "createdAt", "updatedAt"
+].join(",");
 
 /**
  * 备忘录数据操作层
@@ -1480,7 +1522,8 @@ const MemoDAO = {
    */
   async queryAll() {
     const data = await BmobAPI.request("GET",
-      memoPath() + buildWhere({ username: currentUser }) + "&order=-createdAt", null);
+      memoPath() + buildWhere({ username: currentUser })
+      + "&order=-createdAt&keys=" + encodeURIComponent(MEMO_LIST_KEYS), null);
     return data.results || [];
   },
 
@@ -1495,7 +1538,8 @@ const MemoDAO = {
     if (!id) return null;
     try {
       const data = await BmobAPI.request("GET",
-        memoPath() + buildWhere({ objectId: id, username: currentUser }) + "&limit=1", null);
+        memoPath() + buildWhere({ objectId: id, username: currentUser })
+        + "&limit=1&keys=" + encodeURIComponent(MEMO_LIST_KEYS), null);
       const results = (data && data.results) || [];
       return results.length > 0 ? results[0] : null;
     } catch (e) {
@@ -1513,13 +1557,18 @@ const MemoDAO = {
   },
 
   /**
-   * 修改备忘（先校验归属：不存在 / 已删除 / 无权 → 抛 NOTE_NO_ACCESS）
-   * @param {string} id    - 备忘 ID
-   * @param {object} patch - 要更新的字段
+   * 修改备忘（默认先校验归属）
+   * @param {string}  id             - 备忘 ID
+   * @param {object}  patch          - 要更新的字段
+   * @param {boolean} [skipVerify=false] - 跳过归属校验。
+   *   仅图片逐字段写入时使用：备忘归属由调用流程自身保证（记录是本流程刚建/刚校验），
+   *   跳过后每张图少一次 GET，9 张图能快一倍；该路径只写图片字段、不涉及 username。
    */
-  async update(id, patch) {
-    const owned = await this.getById(id);
-    if (!owned) throw makeNoAccessError();
+  async update(id, patch, skipVerify) {
+    if (!skipVerify) {
+      const owned = await this.getById(id);
+      if (!owned) throw makeNoAccessError();
+    }
     return await BmobAPI.request("PUT", memoPath(id), patch);
   },
 
@@ -1831,7 +1880,12 @@ function enterEditMode(m) {
     b.classList.toggle("active", b.getAttribute("data-tag") === selectedTag);
   });
   // 把该备忘已有图片装入九宫格（全部为已完成状态），可继续加图或删图
-  formImages = getMemoImages(m).map(im => makeFormImageItem(im.field, im.url, "done", null));
+  // 编辑模式装载：旧 imgUrl 字段的图本身就是大图（bigUrl 直接给）；新图只有缩略图
+  formImages = getMemoImages(m).map(im => {
+    const item = makeFormImageItem(im.big, im.url, "done", null);
+    item.bigUrl = im.big === "imgUrl" ? im.url : null;
+    return item;
+  });
   batchMemoId = null;
   renderFormGrid();
   // 同步本地缓存（以云端数据为准）
@@ -1924,29 +1978,61 @@ const MAX_IMAGES = 9;   // 每条备忘最多 9 张图片
  */
 
 /**
- * 统一取出一条备忘的全部图片（兼容旧字段）
- * @returns {Array<{field:string, url:string}>} 按 imgUrl → imgUrl1..9 排序
+ * 解析一条备忘的 5 个缩略图打包列 → 长度 10 的数组（下标 1..9 即槽位）
+ * 每列内容是 JSON 数组 [第(2p-1)张, 第2p张]；空槽为 ""
+ * 早期版本遗留的裸 dataURL 会被忽略（那些记录没有正式发布过）
+ */
+function localThumbs(m) {
+  if (m.__th) return m.__th;
+  const arr = Array(10).fill("");
+  for (let p = 1; p <= 5; p++) {
+    const raw = m["thumb" + p];
+    if (!raw || typeof raw !== "string" || raw.charAt(0) !== "[") continue;
+    try {
+      const pair = JSON.parse(raw);
+      if (Array.isArray(pair)) {
+        pair.forEach((u, j) => { if (u) arr[(p - 1) * 2 + j + 1] = u; });
+      }
+    } catch (e) { /* 非本版数据，忽略 */ }
+  }
+  m.__th = arr;
+  return arr;
+}
+
+/**
+ * 统一取出一条备忘的全部图片
+ * @returns {Array<{slot:number, big:string, url:string}>}
+ *   · slot：1..9（旧单图为 0）
+ *   · big：大图字段名（灯箱按需拉取；旧数据为 "imgUrl"）
+ *   · url：列表立即可用的图（缩略图，或旧 imgUrl 大图）
  */
 function getMemoImages(m) {
   if (!m) return [];
   const list = [];
-  if (m.imgUrl) list.push({ field: "imgUrl", url: m.imgUrl });   // 旧版单图数据
+  if (m.imgUrl) list.push({ slot: 0, big: "imgUrl", url: m.imgUrl }); // 旧版单图
+  const th = localThumbs(m);
   for (let i = 1; i <= MAX_IMAGES; i++) {
-    const f = "imgUrl" + i;
-    if (m[f]) list.push({ field: f, url: m[f] });
+    if (th[i]) list.push({ slot: i, big: "imgUrl" + i, url: th[i] });
   }
   return list;
 }
 
-/** 构造一个表单图片项 */
+/**
+ * 构造一个表单图片项
+ * @param {string|null} field 大图字段 imgUrl1..9（上传成功后确定）
+ * @param {string} url 格子里显示的图（本地原图 / 已存记录的缩略图）
+ */
 function makeFormImageItem(field, url, status, file) {
+  const slot = /^imgUrl\d+$/.test(field || "") ? parseInt(field.slice(6), 10) : 0;
   return {
     key: "img_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8),
-    field: field || null,
-    url: url || null,
-    status: status,              // uploading | done | error
-    file: file || null,          // 原始文件（重试时还要用）
-    gen: 0,                      // 代数：移除/重试时 +1，让迟到的旧结果作废
+    field: field || null,       // 大图字段名 imgUrlN（旧数据为 imgUrl）
+    slot: slot,                 // 槽位 1..9（旧单图为 0）
+    url: url || null,           // 格子显示图（done 后是缩略图）
+    bigUrl: null,               // 大图（灯箱用；旧记录可直接有）
+    status: status,             // uploading | done | error
+    file: file || null,         // 原始文件（重试时还要用）
+    gen: 0,                     // 代数：移除/重试时 +1，让迟到的旧结果作废
     errorMsg: ""
   };
 }
@@ -1967,7 +2053,7 @@ function renderFormGrid() {
     } else if (item.status === "error") {
       overlay = `<div class="fg-mask"><button type="button" class="fg-retry" title="${escapeHtml(item.errorMsg || "上传失败")}" onclick="retryFormImage('${item.key}')">↻ 重试</button></div>`;
     }
-    const imgClick = src ? `onclick="openLightboxImages(formImageUrls(), ${idx})"` : "";
+    const imgClick = src ? `onclick="openFormLightbox(${idx})"` : "";
     return `
       <div class="fg-cell">
         ${src
@@ -1977,11 +2063,6 @@ function renderFormGrid() {
         ${overlay}
       </div>`;
   }).join("");
-}
-
-/** 当前表单里可查看的图片地址（灯箱用，上传完的 + 本地预览的都算） */
-function formImageUrls() {
-  return formImages.filter(i => i.url).map(i => i.url);
 }
 
 /**
@@ -2026,14 +2107,20 @@ $("fileInput").addEventListener("change", (e) => {
 /**
  * 串行上传队列：每次只传一张，避免字段抢位和请求并发
  * 任何一张失败都不影响其他张，失败项可单独重试
+ * 队列暂时排空时不立刻收尾：连续选图（含多选文件分批次注入）可能正在往
+ * formImages 里追加新项，留 800ms 静默窗口复查，避免“几张图建成几条备忘”
  */
 async function runUploadQueue() {
   if (batchRunning) return;
   batchRunning = true;
   try {
     while (true) {
-      const item = formImages.find(i => i.status === "uploading");
-      if (!item) break;
+      let item = formImages.find(i => i.status === "uploading");
+      if (!item) {
+        await new Promise(r => setTimeout(r, 800));
+        item = formImages.find(i => i.status === "uploading");
+        if (!item) break;
+      }
       await uploadOneImage(item);
     }
   } finally {
@@ -2043,56 +2130,104 @@ async function runUploadQueue() {
 }
 
 /**
- * 上传单张图片：本地压缩到 ≤36KB → 写入备忘的一个图片字段
- * · 编辑模式：PATCH 进当前备忘
- * · 新建模式第一张：POST 创建备忘（标题/内容/标签用选图瞬间的快照）
- * · 新建模式后续张：PATCH 进刚创建的备忘
+ * 把某槽位的缩略图合并进它所属的打包列（2 张一包）并写云端
+ * 同一条备忘的图片串行上传，本地 __th 缓存即为最新状态，无需先 GET
+ *
+ * @param {string} memoId
+ * @param {number} slot  槽位 1..9
+ * @param {string} thumb dataURL；传 "" 表示删除该槽
+ */
+async function syncThumbPack(memoId, slot, thumb) {
+  const local = memoList.find(m => m.objectId === memoId);
+  const arr = local ? localThumbs(local) : Array(10).fill("");
+  arr[slot] = thumb || "";
+  const p = Math.ceil(slot / 2);
+  const s1 = (p - 1) * 2 + 1;
+  const s2 = p * 2;
+  const pair = [arr[s1] || "", s2 <= MAX_IMAGES ? (arr[s2] || "") : ""];
+  const col = "thumb" + p;
+  const val = pair.some(Boolean) ? JSON.stringify(pair) : "";
+  await MemoDAO.update(memoId, { [col]: val }, true);  // 整包 ≤13KB
+  if (local) { local[col] = val; local.__th = arr; }
+}
+
+/**
+ * 上传单张图片：本地一次解码出【大图 ≤36KB + 缩略图 ≤6KB】
+ * · 大图写 imgUrlN（新建第一张随 POST，其余单字段 PUT）
+ * · 缩略图通过 syncThumbPack 合并进 thumb1..5 打包列
  */
 async function uploadOneImage(item) {
   item.gen++;
   const gen = item.gen;
+  /** 异步中途若这张图已被移除，立刻终止后续动作 */
+  const alive = () => formImages.includes(item) && item.status === "uploading" && item.gen === gen;
   try {
-    // 1) 本地自适应压缩：任何尺寸原图都会压到 ≤36KB；图片损坏无法解码时抛错
-    const dataUrl = await compressImageToDataURL(item.file);
-    if (!formImages.includes(item) || item.status !== "uploading" || item.gen !== gen) return;
+    // 1) 本地压缩：任何尺寸原图都会压到目标体积以内；图片损坏无法解码时抛错
+    const { big, thumb } = await processImage(item.file);
+    if (!alive()) return;
 
     let targetField = item.field || nextFreeField();
+    if (!targetField) throw new Error("图片数量已达上限（" + MAX_IMAGES + " 张）");
+    const slot = parseInt(targetField.slice(6), 10);
+    let memoId = editingId || batchMemoId;
+    let needWriteBig = item.field !== targetField;  // 重试时大图可能已写过
 
-    if (editingId) {
-      // 2a) 编辑模式：单字段 PATCH（请求体只有一张图，绝不超 40KB）
-      await MemoDAO.update(editingId, { [targetField]: dataUrl });
-    } else if (batchMemoId) {
-      // 2b) 新建模式，备忘已由本批第一张图创建：继续往空字段 PATCH
-      await MemoDAO.update(batchMemoId, { [targetField]: dataUrl });
-    } else {
-      // 2c) 新建模式第一批第一张：POST 把备忘连同图片一起创建
+    if (!memoId) {
+      // 2) 新建模式第一批第一张：POST 只带大图 imgUrl1 创建备忘
       const snap = snapshotForNewMemo();
+      targetField = "imgUrl1";
       const body = {
         title: snap.title, content: snap.content,
         isFinish: false, username: currentUser,
-        imgUrl1: dataUrl
+        imgUrl1: big
       };
       if (snap.tag) body.tag = snap.tag;
       const created = await MemoDAO.create(body);
 
       // 请求往返期间用户可能已把这张图移除 → 删除刚建出的“孤儿备忘”
-      if (!formImages.includes(item) || item.status !== "uploading" || item.gen !== gen) {
+      if (!alive()) {
         try { await MemoDAO.remove(created.objectId); } catch (_) {}
         return;
       }
-      targetField = "imgUrl1";
       batchMemoId = created.objectId;
+      memoId = created.objectId;
+      item.field = "imgUrl1";
+      item.slot = 1;
+      needWriteBig = false;   // 大图已随 POST 写入
       memoList.unshift({
         objectId: created.objectId,
         title: snap.title, content: snap.content,
-        isFinish: false, imgUrl1: dataUrl,
-        username: currentUser, tag: snap.tag || null,
+        isFinish: false, username: currentUser,
+        tag: snap.tag || null,
         createdAt: created.createdAt
       });
     }
 
-    item.field = targetField;
-    item.url = dataUrl;
+    // 3) 后续张 / 编辑模式：先写大图（跳过归属校验，归属由本流程保证）
+    if (needWriteBig) {
+      await MemoDAO.update(memoId, { [targetField]: big }, true);
+      if (!alive()) {
+        // 用户恰在请求途中移除了这张图：把刚写入的大图字段回滚清空
+        try { await MemoDAO.update(memoId, { [targetField]: "" }, true); } catch (_) {}
+        return;
+      }
+      item.field = targetField;
+      item.slot = slot;
+    }
+    // 4) 缩略图合并进打包列（第二次请求，整包 ≤13KB，绝不超 40KB）
+    await syncThumbPack(memoId, item.slot, thumb);
+    if (!alive()) {
+      // 用户在请求途中移除：大图清空 + 打包列按本地状态重算
+      try {
+        await MemoDAO.update(memoId, { [item.field]: "" }, true);
+        await syncThumbPack(memoId, item.slot, "");
+      } catch (_) {}
+      return;
+    }
+
+    // 5) 回写表单项（列表缩略图已由 syncThumbPack 写入本地缓存）
+    item.url = thumb;
+    item.bigUrl = big;
     item.status = "done";
     item.errorMsg = "";
     renderFormGrid();
@@ -2117,7 +2252,7 @@ function snapshotForNewMemo() {
   return { title, content, tag: selectedTag };
 }
 
-/** 找下一个未被占用的图片字段 imgUrl1..9（被占用或满了返回 null） */
+/** 找下一个未被占用的大图字段 imgUrl1..9（被占用或满了返回 null） */
 function nextFreeField() {
   const used = formImages.map(i => i.field).filter(Boolean);
   for (let i = 1; i <= MAX_IMAGES; i++) {
@@ -2163,9 +2298,10 @@ function removeFormImage(key) {
   }
   withLoading(async () => {
     try {
-      await MemoDAO.update(memoId, { [item.field]: "" });
-      const local = memoList.find(m => m.objectId === memoId);
-      if (local) delete local[item.field];
+      // 清空大图字段（旧 imgUrl 或 imgUrlN）
+      await MemoDAO.update(memoId, { [item.field]: "" }, true);
+      // 新版图片还要把缩略图从打包列中移除并重写该包
+      if (item.slot >= 1) await syncThumbPack(memoId, item.slot, "");
       const cur = formImages.findIndex(i => i.key === key);
       if (cur !== -1) formImages.splice(cur, 1);
       renderFormGrid();
@@ -2214,49 +2350,94 @@ function afterBatch() {
   }
 }
 
-/* ---- 图片灯箱（支持多图左右切换） ---- */
+/* ---- 图片灯箱（缩略图秒开，大图按需单字段拉取，支持左右切换） ---- */
 
-const LightboxState = { urls: [], idx: 0 };
+const LightboxState = {
+  memoId: null,     // 图片属于哪条备忘（表单里的本地原图为 null）
+  items: [],        // [{ big: 大图字段名|null, url: 立即可用的缩略图/旧大图 }]
+  cache: [],        // 与 items 等长：已拉到的大图，否则 null
+  idx: 0
+};
 
-/** 用任意 URL 数组打开灯箱（表单网格 / 备忘卡片都走这里） */
-function openLightboxImages(urls, idx) {
-  if (!urls || !urls.length) return;
-  LightboxState.urls = urls.slice();
-  LightboxState.idx = Math.min(Math.max(0, idx || 0), urls.length - 1);
-  renderLightbox();
-  $("lightbox").classList.add("show");
-}
-
-/** 打开指定备忘的灯箱（从 memoList 取图） */
+/** 备忘卡片入口：列表里只有缩略图，大图打开时逐张 GET（响应仅 ~36KB） */
 function openLightboxForMemo(id, idx) {
   const m = memoList.find(x => x.objectId === id);
   if (!m) return;
-  openLightboxImages(getMemoImages(m).map(i => i.url), idx);
+  const imgs = getMemoImages(m);
+  if (!imgs.length) return;
+  LightboxState.memoId = id;
+  LightboxState.items = imgs.map(i => ({ big: i.big, url: i.url }));
+  // 旧版 imgUrl 单图字段本身就在内存里，直接当缓存，无需再请求
+  LightboxState.cache = imgs.map(i => (i.big === "imgUrl" ? i.url : null));
+  LightboxState.idx = Math.min(Math.max(0, idx || 0), imgs.length - 1);
+  $("lightbox").classList.add("show");
+  renderLightbox();
+  ensureLightboxBig();
 }
 
-/** 渲染灯箱当前画面 + 箭头显隐 + 计数 */
+/** 表单九宫格入口：顺序完全跟随 formImages */
+function openFormLightbox(idx) {
+  if (!formImages.length) return;
+  LightboxState.memoId = editingId || batchMemoId;
+  LightboxState.items = formImages.map(i => ({ big: i.field, url: i.url }));
+  LightboxState.cache = formImages.map(i => {
+    if (i.bigUrl) return i.bigUrl;   // 本次会话刚传完，大图还在内存
+    if (i.file) return i.url;       // 上传中/失败：本地原图本身就是高清图
+    return null;                    // 编辑模式装载的历史记录：稍后按需拉
+  });
+  LightboxState.idx = Math.min(Math.max(0, idx || 0), formImages.length - 1);
+  $("lightbox").classList.add("show");
+  renderLightbox();
+  ensureLightboxBig();
+}
+
+/** 渲染灯箱当前画面：优先大图缓存，否则先显示缩略图 + 箭头显隐 + 计数 */
 function renderLightbox() {
-  const { urls, idx } = LightboxState;
-  $("lightboxImg").src = urls[idx] || "";
-  const multi = urls.length > 1;
+  const { items, cache, idx } = LightboxState;
+  $("lightboxImg").src = cache[idx] || (items[idx] && items[idx].url) || "";
+  const multi = items.length > 1;
   $("lbPrev").style.display = multi ? "flex" : "none";
   $("lbNext").style.display = multi ? "flex" : "none";
-  $("lbCount").textContent = (idx + 1) + " / " + urls.length;
+  $("lbCount").textContent = (idx + 1) + " / " + items.length;
 }
 
-/** 左右切换（循环） */
+/** 当前张缺大图时，按单个字段向云端拉取（避开 200KB 响应上限） */
+async function ensureLightboxBig() {
+  const s = LightboxState;
+  const want = s.idx;
+  const cur = s.items[want];
+  if (!cur || s.cache[want] || !s.memoId || !cur.big || cur.big === "imgUrl") return;
+  const hint = $("lbHint");
+  if (hint) hint.textContent = "高清图加载中…";
+  try {
+    const r = await BmobAPI.request("GET",
+      "/classes/" + TABLE_NAME + "/" + s.memoId + "?keys=" + cur.big, null);
+    s.cache[want] = r[cur.big] || cur.url;
+    if (s.idx === want) {
+      $("lightboxImg").src = s.cache[want] || "";
+      if (hint) hint.textContent = "";
+    }
+  } catch (e) {
+    if (s.idx === want && hint) hint.textContent = "高清图加载失败，先看缩略图";
+  }
+}
+
+/** 左右切换（循环）：切到哪张拉哪张，拉过的走缓存 */
 function lightboxShift(d) {
-  const { urls } = LightboxState;
-  if (urls.length < 2) return;
-  LightboxState.idx = (LightboxState.idx + d + urls.length) % urls.length;
+  const s = LightboxState;
+  if (s.items.length < 2) return;
+  s.idx = (s.idx + d + s.items.length) % s.items.length;
   renderLightbox();
+  ensureLightboxBig();
 }
 
 /** 关闭灯箱 */
 function closeLightbox() {
   $("lightbox").classList.remove("show");
   $("lightboxImg").src = "";
-  LightboxState.urls = [];
+  LightboxState.items = [];
+  LightboxState.cache = [];
+  LightboxState.memoId = null;
 }
 
 // 键盘：ESC 关闭，← → 切换
