@@ -1400,8 +1400,21 @@ function retryPolish() {
 
 let memoList = [];       // 备忘列表（内存缓存，与云端同步）
 let editingId = null;    // 当前编辑的备忘 ID（null = 新建模式）
-let pendingImgUrl = null;// 待提交的图片 URL
 let selectedTag = null;  // 表单选中的标签
+
+/*
+ * 多图上传状态
+ * ─────────────────────────────────────────────
+ * · formImages：表单九宫格里的图片，每项结构
+ *     { key 本地唯一标识, field 云端字段名(imgUrl/imgUrl1..9),
+ *       url 预览地址, status: uploading|done|error,
+ *       file 原始文件, gen 代数(移除/重试时+1让迟到结果作废), errorMsg }
+ * · batchMemoId：新建模式下第一批图已创建出来的备忘 ID（null = 备忘还没建）
+ * · batchRunning：串行上传队列是否正在运行（防重入）
+ */
+let formImages = [];
+let batchMemoId = null;
+let batchRunning = false;
 let activeFilter = "all";// 列表筛选标签
 let isInitialLoad = true;// 标记首次加载（防止庆祝弹窗在刷新时重复弹出）
 
@@ -1610,7 +1623,21 @@ function renderList() {
     showCelebrate("太厉害了，所有备忘都完成了～🎉");
   }
 
-  wrap.innerHTML = filtered.map(m => `
+  wrap.innerHTML = filtered.map(m => {
+    // 统一取出该备忘的图片（兼容旧 imgUrl 字段 + 新 imgUrl1..9 字段）
+    const imgs = getMemoImages(m);
+    let imgHtml = "";
+    if (imgs.length === 1) {
+      // 1 张：全宽大图（沿用原样式）
+      imgHtml = `<img class="memo-img" src="${escapeHtml(imgs[0].url)}" alt="图片" loading="lazy" title="点击放大查看" onclick="openLightboxForMemo('${m.objectId}', 0)" />`;
+    } else if (imgs.length > 1) {
+      // 多张：2-4 张 2 列、5-9 张 3 列
+      const cols = (imgs.length <= 4) ? 2 : 3;
+      imgHtml = `<div class="memo-photo-grid cols-${cols}">` +
+        imgs.map((im, i) => `<img src="${escapeHtml(im.url)}" alt="图片${i + 1}" loading="lazy" title="点击放大查看" onclick="openLightboxForMemo('${m.objectId}', ${i})" />`).join("") +
+        `</div>`;
+    }
+    return `
     <div class="memo-item ${m.isFinish ? 'done' : ''}" data-id="${m.objectId}">
       <div class="memo-row">
         <div class="memo-check ${m.isFinish ? 'checked' : ''}" onclick="toggleFinish('${m.objectId}', ${!m.isFinish}, this)">
@@ -1619,7 +1646,7 @@ function renderList() {
         <div class="memo-content">
           <div class="memo-title">${escapeHtml(m.title)}</div>
           ${m.content ? `<div class="memo-desc">${escapeHtml(m.content)}</div>` : ''}
-          ${m.imgUrl ? `<img class="memo-img" src="${escapeHtml(m.imgUrl)}" alt="图片" loading="lazy" title="点击放大查看" onclick="openLightbox(this.src)" />` : ''}
+          ${imgHtml}
         </div>
       </div>
       <div class="memo-meta">
@@ -1631,7 +1658,8 @@ function renderList() {
         <button class="btn-mini btn-del" onclick="delMemo('${m.objectId}')">删除</button>
       </div>
     </div>
-  `).join("");
+  `;
+  }).join("");
 
   // 渲染后叠加当前搜索过滤
   applySearch();
@@ -1686,17 +1714,17 @@ async function fetchMemos() {
 
 /**
  * 新增备忘（便捷封装：构造请求体 + 调 MemoDAO.create + 返回完整对象）
+ * 注意：图片走「选完即入库」的独立流程，不再经过本函数
  * @returns {Promise<object>} 包含 objectId 的备忘对象
  */
-async function createMemo(title, content, imgUrl, tag) {
+async function createMemo(title, content, tag) {
   const body = { title, content, isFinish: false, username: currentUser };
-  if (imgUrl) body.imgUrl = imgUrl;
   if (tag) body.tag = tag;
   const data = await MemoDAO.create(body);
   showToast("备忘已添加 ✿");
   return {
     objectId: data.objectId, title, content, isFinish: false,
-    imgUrl: imgUrl || null, username: currentUser, tag: tag || null,
+    imgUrl: null, username: currentUser, tag: tag || null,
     createdAt: data.createdAt
   };
 }
@@ -1711,12 +1739,17 @@ async function submitMemo() {
   const content = $("contentInput").value.trim();
   if (!title) { showToast("标题不能为空"); return; }
 
+  // 图片批量上传 / 重试尚未收尾时禁止提交（避免和图片流程打架）
+  if (formImages.some(i => i.status === "uploading") || (!editingId && formImages.length > 0)) {
+    showToast("图片还在处理中，请稍等它完成 ✿");
+    return;
+  }
+
   await withLoading(async () => {
     try {
       if (editingId) {
-        // 编辑模式：更新备忘
+        // 编辑模式：只更新文字 / 标签（图片在选图、删图时已即时同步云端）
         const patch = { title, content };
-        if (pendingImgUrl) patch.imgUrl = pendingImgUrl;
         if (selectedTag) patch.tag = selectedTag;
         await MemoDAO.update(editingId, patch);
         // 同步更新本地缓存
@@ -1724,7 +1757,6 @@ async function submitMemo() {
         if (item) {
           item.title = title;
           item.content = content;
-          if (pendingImgUrl) item.imgUrl = pendingImgUrl;
           if (selectedTag) item.tag = selectedTag;
         }
         showToast("修改成功 ✿");
@@ -1732,7 +1764,7 @@ async function submitMemo() {
         renderList();
       } else {
         // 新建模式：创建备忘
-        const newMemo = await createMemo(title, content, pendingImgUrl, selectedTag);
+        const newMemo = await createMemo(title, content, selectedTag);
         memoList.unshift(newMemo);
         renderList();
       }
@@ -1793,15 +1825,15 @@ function enterEditMode(m) {
   $("contentInput").value = m.content || "";
   $("submitBtn").textContent = "💾 保存修改";
   $("editBar").classList.add("show");
-  pendingImgUrl = m.imgUrl || null;
   selectedTag = m.tag || null;
   // 更新标签选中状态
   document.querySelectorAll("#tagPicker .tag-pick").forEach(b => {
     b.classList.toggle("active", b.getAttribute("data-tag") === selectedTag);
   });
-  // 编辑时若该备忘已有图片，显示大图预览（点击可放大，✕ 可移除）
-  $("imgPreviewWrap").classList.toggle("show", !!m.imgUrl);
-  $("imgPreview").src = m.imgUrl || "";
+  // 把该备忘已有图片装入九宫格（全部为已完成状态），可继续加图或删图
+  formImages = getMemoImages(m).map(im => makeFormImageItem(im.field, im.url, "done", null));
+  batchMemoId = null;
+  renderFormGrid();
   // 同步本地缓存（以云端数据为准）
   const local = memoList.find(x => x.objectId === m.objectId);
   if (local) Object.assign(local, m);
@@ -1822,10 +1854,10 @@ function resetForm() {
   $("titleInput").value = "";
   $("contentInput").value = "";
   $("aiInput").value = "";
-  $("imgPreviewWrap").classList.remove("show");
-  $("imgPreview").src = "";
   $("fileInput").value = "";
-  pendingImgUrl = null;
+  formImages = [];
+  batchMemoId = null;
+  renderFormGrid();
   selectedTag = null;
   document.querySelectorAll("#tagPicker .tag-pick").forEach(b => b.classList.remove("active"));
 }
@@ -1877,125 +1909,362 @@ function exportMemos() {
   });
 }
 
-/* ---- 图片上传 ---- */
+/* ---- 多图上传（最多 9 张，图片大小不限） ---- */
+
+const MAX_IMAGES = 9;   // 每条备忘最多 9 张图片
 
 /*
- * 图片选择 → 上传 → 【立即写入备忘录】
+ * 为什么 9 张图要用 imgUrl1…imgUrl9 九个字段分开存？
  * ─────────────────────────────────────────────
- * 关键设计：图片不再"暂存表单等提交"，而是选完图就立刻保存到云端，
- * 彻底避免"图片停在页面上、一刷新就丢"的问题：
- *   · 编辑模式：图片即时更新到当前这条备忘（PATCH imgUrl）
- *   · 新建模式：立即创建一条带图备忘（没填标题就自动用"📷 图片备忘 时间"），
- *               已填的标题/内容/标签会一并带上，之后可点「编辑」补充文字
+ * Bmob 免费版【单次请求体硬上限 40KB】，每张图本地压缩到 ≤36KB：
+ *   · 9 张塞进一个字段/一次请求 = 约 324KB，必然超限
+ *   · 拆成九个字段后，每张图就是一次只带一个字段的请求（≤37KB），永远不超限
+ *   · 备忘和图片同处一条记录：删备忘自动带走图片，不用清理子表
+ * 旧数据的 imgUrl 单字段继续兼容（见 getMemoImages）
  */
-$("fileInput").addEventListener("change", async (e) => {
-  const file = e.target.files[0];
-  e.target.value = "";   // 清空，允许重复选择同一个文件
-  if (!file) return;
-  if (!file.type || !file.type.startsWith("image/")) { showToast("请选择图片文件"); return; }
-  // 不再限制原图大小：无论多大都会在本地自适应压缩到 60KB 以内再上传
 
-  // 1) 先把本地原图显示到大预览区（即时反馈，不用等上传）
-  const reader = new FileReader();
-  reader.onload = (ev) => {
-    $("imgPreview").src = ev.target.result;
-    $("imgPreviewWrap").classList.add("show");
+/**
+ * 统一取出一条备忘的全部图片（兼容旧字段）
+ * @returns {Array<{field:string, url:string}>} 按 imgUrl → imgUrl1..9 排序
+ */
+function getMemoImages(m) {
+  if (!m) return [];
+  const list = [];
+  if (m.imgUrl) list.push({ field: "imgUrl", url: m.imgUrl });   // 旧版单图数据
+  for (let i = 1; i <= MAX_IMAGES; i++) {
+    const f = "imgUrl" + i;
+    if (m[f]) list.push({ field: f, url: m[f] });
+  }
+  return list;
+}
+
+/** 构造一个表单图片项 */
+function makeFormImageItem(field, url, status, file) {
+  return {
+    key: "img_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8),
+    field: field || null,
+    url: url || null,
+    status: status,              // uploading | done | error
+    file: file || null,          // 原始文件（重试时还要用）
+    gen: 0,                      // 代数：移除/重试时 +1，让迟到的旧结果作废
+    errorMsg: ""
   };
-  reader.readAsDataURL(file);
+}
 
-  await withLoading(async () => {
-    try {
-      // 2) 上传到 Bmob 文件服务；文件服务未开通时自动降级为压缩 dataURL
-      const result = await BmobAPI.uploadFile(file);
-
-      if (editingId) {
-        // 3a) 编辑模式：图片立即写入当前备忘，刷新也不会丢
-        await MemoDAO.update(editingId, { imgUrl: result.url });
-        const item = memoList.find(m => m.objectId === editingId);
-        if (item) item.imgUrl = result.url;
-        pendingImgUrl = result.url;
-        $("imgPreview").src = result.url;
-        renderList();
-        showToast(result.fallback ? "图片已压缩并插入备忘 ✿" : "图片已插入备忘 ✿");
-      } else {
-        // 3b) 新建模式：直接创建一条带图备忘，保证图片马上进入备忘录
-        let title = $("titleInput").value.trim();
-        const content = $("contentInput").value.trim();
-        if (!title) {
-          const d = new Date();
-          const pad = n => String(n).padStart(2, "0");
-          title = "📷 图片备忘 " + pad(d.getMonth() + 1) + "-" + pad(d.getDate())
-                  + " " + pad(d.getHours()) + ":" + pad(d.getMinutes());
-        }
-        const newMemo = await createMemo(title, content, result.url, selectedTag);
-        memoList.unshift(newMemo);
-        renderList();
-        resetForm();
-        showToast(result.fallback
-          ? "图片已压缩保存到新备忘 ✿ 点「编辑」可补充文字"
-          : "图片已保存到新备忘 ✿ 点「编辑」可补充文字");
-      }
-    } catch (err) {
-      handleOpError(err, { id: editingId });
-      // 失败后把预览区恢复到操作前的状态（编辑模式保留旧图）
-      if (editingId) {
-        const cur = memoList.find(m => m.objectId === editingId);
-        if (cur && cur.imgUrl) { $("imgPreview").src = cur.imgUrl; }
-        else { $("imgPreviewWrap").classList.remove("show"); $("imgPreview").src = ""; }
-      } else {
-        $("imgPreviewWrap").classList.remove("show");
-        $("imgPreview").src = "";
-      }
+/**
+ * 渲染表单九宫格
+ * · 上传中：半透明遮罩 + 白色转圈
+ * · 失败：遮罩上出现「↻ 重试」按钮（悬停可看到失败原因）
+ * · ✕ 随时移除；点图片进灯箱
+ */
+function renderFormGrid() {
+  const box = $("imgFormGrid");
+  box.innerHTML = formImages.map((item, idx) => {
+    const src = item.url || "";
+    let overlay = "";
+    if (item.status === "uploading") {
+      overlay = '<div class="fg-mask"><span class="fg-spin"></span></div>';
+    } else if (item.status === "error") {
+      overlay = `<div class="fg-mask"><button type="button" class="fg-retry" title="${escapeHtml(item.errorMsg || "上传失败")}" onclick="retryFormImage('${item.key}')">↻ 重试</button></div>`;
     }
+    const imgClick = src ? `onclick="openLightboxImages(formImageUrls(), ${idx})"` : "";
+    return `
+      <div class="fg-cell">
+        ${src
+          ? `<img src="${escapeHtml(src)}" alt="图片${idx + 1}" ${imgClick} />`
+          : '<div class="fg-placeholder"></div>'}
+        <button type="button" class="fg-del" title="移除这张图片" onclick="removeFormImage('${item.key}')">✕</button>
+        ${overlay}
+      </div>`;
+  }).join("");
+}
+
+/** 当前表单里可查看的图片地址（灯箱用，上传完的 + 本地预览的都算） */
+function formImageUrls() {
+  return formImages.filter(i => i.url).map(i => i.url);
+}
+
+/**
+ * 选图入口（支持一次多选）
+ * 选完立即本地预览，并启动串行上传队列；图片不再等表单提交
+ */
+$("fileInput").addEventListener("change", (e) => {
+  const files = Array.from(e.target.files || []);
+  e.target.value = "";   // 清空，允许重复选择同一文件
+  const images = files.filter(f => f.type && f.type.startsWith("image/"));
+  if (!images.length) { if (files.length) showToast("请选择图片文件"); return; }
+
+  // 数量校验：已有图片（含上传中/失败占位）+ 本次选择 ≤ 9
+  const remain = MAX_IMAGES - formImages.length;
+  if (remain <= 0) { showToast("最多只能上传 " + MAX_IMAGES + " 张图片哦"); return; }
+  const picked = images.slice(0, remain);
+  if (images.length > remain) {
+    showToast("最多 " + MAX_IMAGES + " 张，已自动选前 " + remain + " 张");
+  }
+
+  const added = [];
+  for (const file of picked) {
+    const item = makeFormImageItem(null, null, "uploading", file);
+    formImages.push(item);
+    added.push(item);
+  }
+  // 本地原图立即显示（即时反馈，不用等压缩和网络）
+  picked.forEach((file, i) => {
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      if (formImages.includes(added[i])) {
+        added[i].url = ev.target.result;
+        renderFormGrid();
+      }
+    };
+    reader.readAsDataURL(file);
   });
+  renderFormGrid();
+  runUploadQueue();
 });
 
 /**
- * 移除当前备忘的图片
- *   · 编辑模式：立即从云端备忘中移除（PATCH imgUrl 为空），刷新后同样生效
- *   · 新建暂态：仅清空本地预览
+ * 串行上传队列：每次只传一张，避免字段抢位和请求并发
+ * 任何一张失败都不影响其他张，失败项可单独重试
  */
-async function removeCurrentImg() {
-  if (!editingId) {
-    pendingImgUrl = null;
-    $("imgPreviewWrap").classList.remove("show");
-    $("imgPreview").src = "";
+async function runUploadQueue() {
+  if (batchRunning) return;
+  batchRunning = true;
+  try {
+    while (true) {
+      const item = formImages.find(i => i.status === "uploading");
+      if (!item) break;
+      await uploadOneImage(item);
+    }
+  } finally {
+    batchRunning = false;
+  }
+  afterBatch();
+}
+
+/**
+ * 上传单张图片：本地压缩到 ≤36KB → 写入备忘的一个图片字段
+ * · 编辑模式：PATCH 进当前备忘
+ * · 新建模式第一张：POST 创建备忘（标题/内容/标签用选图瞬间的快照）
+ * · 新建模式后续张：PATCH 进刚创建的备忘
+ */
+async function uploadOneImage(item) {
+  item.gen++;
+  const gen = item.gen;
+  try {
+    // 1) 本地自适应压缩：任何尺寸原图都会压到 ≤36KB；图片损坏无法解码时抛错
+    const dataUrl = await compressImageToDataURL(item.file);
+    if (!formImages.includes(item) || item.status !== "uploading" || item.gen !== gen) return;
+
+    let targetField = item.field || nextFreeField();
+
+    if (editingId) {
+      // 2a) 编辑模式：单字段 PATCH（请求体只有一张图，绝不超 40KB）
+      await MemoDAO.update(editingId, { [targetField]: dataUrl });
+    } else if (batchMemoId) {
+      // 2b) 新建模式，备忘已由本批第一张图创建：继续往空字段 PATCH
+      await MemoDAO.update(batchMemoId, { [targetField]: dataUrl });
+    } else {
+      // 2c) 新建模式第一批第一张：POST 把备忘连同图片一起创建
+      const snap = snapshotForNewMemo();
+      const body = {
+        title: snap.title, content: snap.content,
+        isFinish: false, username: currentUser,
+        imgUrl1: dataUrl
+      };
+      if (snap.tag) body.tag = snap.tag;
+      const created = await MemoDAO.create(body);
+
+      // 请求往返期间用户可能已把这张图移除 → 删除刚建出的“孤儿备忘”
+      if (!formImages.includes(item) || item.status !== "uploading" || item.gen !== gen) {
+        try { await MemoDAO.remove(created.objectId); } catch (_) {}
+        return;
+      }
+      targetField = "imgUrl1";
+      batchMemoId = created.objectId;
+      memoList.unshift({
+        objectId: created.objectId,
+        title: snap.title, content: snap.content,
+        isFinish: false, imgUrl1: dataUrl,
+        username: currentUser, tag: snap.tag || null,
+        createdAt: created.createdAt
+      });
+    }
+
+    item.field = targetField;
+    item.url = dataUrl;
+    item.status = "done";
+    item.errorMsg = "";
+    renderFormGrid();
+  } catch (e) {
+    if (!formImages.includes(item) || item.gen !== gen) return;
+    item.status = "error";
+    item.errorMsg = (e && e.message) || "上传失败";
+    renderFormGrid();
+  }
+}
+
+/** 新建模式创建备忘时的标题/内容/标签快照（无标题自动生成“📷 图片备忘 时间”） */
+function snapshotForNewMemo() {
+  let title = $("titleInput").value.trim();
+  const content = $("contentInput").value.trim();
+  if (!title) {
+    const d = new Date();
+    const pad = n => String(n).padStart(2, "0");
+    title = "📷 图片备忘 " + pad(d.getMonth() + 1) + "-" + pad(d.getDate())
+          + " " + pad(d.getHours()) + ":" + pad(d.getMinutes());
+  }
+  return { title, content, tag: selectedTag };
+}
+
+/** 找下一个未被占用的图片字段 imgUrl1..9（被占用或满了返回 null） */
+function nextFreeField() {
+  const used = formImages.map(i => i.field).filter(Boolean);
+  for (let i = 1; i <= MAX_IMAGES; i++) {
+    const f = "imgUrl" + i;
+    if (!used.includes(f)) return f;
+  }
+  return null;
+}
+
+/**
+ * 移除九宫格中的一张图片
+ * · 上传中：直接移除（在途请求无法中断，迟到结果会被 gen/includes 校验丢弃；
+ *   若它是“第一张 POST”且随后才成功，uploadOneImage 会自动删除孤儿备忘）
+ * · 失败：直接移除
+ * · 已完成：云端对应字段 PATCH 为空，刷新后同样生效
+ */
+function removeFormImage(key) {
+  const idx = formImages.findIndex(i => i.key === key);
+  if (idx === -1) return;
+  const item = formImages[idx];
+
+  if (item.status === "uploading") {
+    item.gen++;
+    item.status = "removed";
+    formImages.splice(idx, 1);
+    renderFormGrid();
     return;
   }
-  await withLoading(async () => {
+
+  if (item.status === "error") {
+    formImages.splice(idx, 1);
+    renderFormGrid();
+    afterBatch();   // 失败项被移光后可能正好整批完成
+    return;
+  }
+
+  // done：云端清空该字段
+  const memoId = editingId || batchMemoId;
+  if (!memoId || !item.field) {
+    formImages.splice(idx, 1);
+    renderFormGrid();
+    return;
+  }
+  withLoading(async () => {
     try {
-      await MemoDAO.update(editingId, { imgUrl: "" });
-      const item = memoList.find(m => m.objectId === editingId);
-      if (item) item.imgUrl = "";
-      pendingImgUrl = null;
-      $("imgPreviewWrap").classList.remove("show");
-      $("imgPreview").src = "";
+      await MemoDAO.update(memoId, { [item.field]: "" });
+      const local = memoList.find(m => m.objectId === memoId);
+      if (local) delete local[item.field];
+      const cur = formImages.findIndex(i => i.key === key);
+      if (cur !== -1) formImages.splice(cur, 1);
+      renderFormGrid();
       renderList();
       showToast("图片已移除 ✿");
-    } catch (err) {
-      handleOpError(err, { id: editingId });
+      afterBatch();
+    } catch (e) {
+      handleOpError(e, { id: memoId });
     }
   });
 }
 
-/* ---- 图片灯箱 ---- */
+/** 重试一张失败的图片（字段保持原分配） */
+function retryFormImage(key) {
+  const item = formImages.find(i => i.key === key);
+  if (!item || item.status !== "error" || !item.file) return;
+  item.status = "uploading";
+  item.errorMsg = "";
+  renderFormGrid();
+  runUploadQueue();
+}
 
-/** 打开灯箱全屏查看图片 */
-function openLightbox(src) {
-  if (!src) return;
-  $("lightboxImg").src = src;
+/**
+ * 一批上传全部结束后的统一收尾
+ * · 新建模式全部成功：备忘已在列表，提示后清空表单（与旧版体验一致）
+ * · 有失败：保留网格，提示可重试 / 移除（失败项全部被移除后也会正常收尾）
+ * · 编辑模式：刷新卡片，按成功/失败给出提示
+ */
+function afterBatch() {
+  if (formImages.some(i => i.status === "uploading")) return;
+  const doneN = formImages.filter(i => i.status === "done").length;
+  const failN = formImages.filter(i => i.status === "error").length;
+
+  if (!editingId && batchMemoId) {
+    renderList();
+    if (failN === 0) {
+      showToast(doneN + " 张图片已保存到新备忘 ✿ 点「编辑」可补充文字");
+      resetForm();
+    } else {
+      showToast(doneN + " 张已保存，" + failN + " 张失败，点 ↻ 重试或 ✕ 移除");
+    }
+  } else if (editingId) {
+    renderList();
+    if (failN === 0) showToast("图片已全部插入备忘 ✿");
+    else showToast(doneN + " 张成功，" + failN + " 张失败，点 ↻ 重试");
+  }
+}
+
+/* ---- 图片灯箱（支持多图左右切换） ---- */
+
+const LightboxState = { urls: [], idx: 0 };
+
+/** 用任意 URL 数组打开灯箱（表单网格 / 备忘卡片都走这里） */
+function openLightboxImages(urls, idx) {
+  if (!urls || !urls.length) return;
+  LightboxState.urls = urls.slice();
+  LightboxState.idx = Math.min(Math.max(0, idx || 0), urls.length - 1);
+  renderLightbox();
   $("lightbox").classList.add("show");
+}
+
+/** 打开指定备忘的灯箱（从 memoList 取图） */
+function openLightboxForMemo(id, idx) {
+  const m = memoList.find(x => x.objectId === id);
+  if (!m) return;
+  openLightboxImages(getMemoImages(m).map(i => i.url), idx);
+}
+
+/** 渲染灯箱当前画面 + 箭头显隐 + 计数 */
+function renderLightbox() {
+  const { urls, idx } = LightboxState;
+  $("lightboxImg").src = urls[idx] || "";
+  const multi = urls.length > 1;
+  $("lbPrev").style.display = multi ? "flex" : "none";
+  $("lbNext").style.display = multi ? "flex" : "none";
+  $("lbCount").textContent = (idx + 1) + " / " + urls.length;
+}
+
+/** 左右切换（循环） */
+function lightboxShift(d) {
+  const { urls } = LightboxState;
+  if (urls.length < 2) return;
+  LightboxState.idx = (LightboxState.idx + d + urls.length) % urls.length;
+  renderLightbox();
 }
 
 /** 关闭灯箱 */
 function closeLightbox() {
   $("lightbox").classList.remove("show");
   $("lightboxImg").src = "";
+  LightboxState.urls = [];
 }
 
-// ESC 键关闭灯箱
+// 键盘：ESC 关闭，← → 切换
 document.addEventListener("keydown", (e) => {
+  if (!$("lightbox").classList.contains("show")) return;
   if (e.key === "Escape") closeLightbox();
+  else if (e.key === "ArrowLeft") lightboxShift(-1);
+  else if (e.key === "ArrowRight") lightboxShift(1);
 });
 
 /* ---- 主题切换 ---- */
