@@ -276,46 +276,78 @@ body {
 .btn-upload:active { transform: translate(1px,1px); box-shadow: 1px 1px 0 var(--shadow); }
 #fileInput { display: none; }
 
-/* 图片大图预览区（上传后 / 编辑备忘时显示） */
-.img-preview-wrap {
-  display: none;
-  position: relative;
+/* 图片九宫格预览（表单内，最多 9 张；空网格自动隐藏） */
+.img-form-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
   margin: 2px 0 14px;
+}
+.img-form-grid:empty { display: none; }
+.fg-cell {
+  position: relative;
+  aspect-ratio: 1;
   border: 2px solid var(--border);
-  border-radius: 12px;
+  border-radius: 10px;
   overflow: hidden;
   background: #fff;
-  box-shadow: 3px 3px 0 var(--shadow);
+  box-shadow: 2px 2px 0 var(--shadow);
 }
-.img-preview-wrap.show { display: block; }
-.img-preview-wrap img {
-  display: block;
+.fg-cell img {
   width: 100%;
-  max-height: 280px;
-  object-fit: contain;
-  background: #fff;
+  height: 100%;
+  object-fit: cover;
+  display: block;
   cursor: zoom-in;
 }
-.img-remove {
+.fg-del {
   position: absolute;
-  top: 8px;
-  right: 8px;
-  width: 32px;
-  height: 32px;
+  top: 4px;
+  right: 4px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
   border: 2px solid var(--border);
   background: #ff5b5b;
   color: #fff;
-  font-size: 14px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+  font-family: inherit;
+  box-shadow: 1px 1px 0 var(--shadow);
+}
+/* 上传中遮罩：白色转圈 */
+.fg-mask {
+  position: absolute;
+  inset: 0;
+  background: rgba(30, 25, 60, .45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.fg-spin {
+  width: 26px;
+  height: 26px;
+  border: 3px solid rgba(255,255,255,.4);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: fgspin .8s linear infinite;
+}
+@keyframes fgspin { to { transform: rotate(360deg); } }
+/* 失败重试按钮（点 ↻ 重新上传这一张） */
+.fg-retry {
+  border: 2px solid #fff;
+  background: #ff5b5b;
+  color: #fff;
+  border-radius: 8px;
+  padding: 5px 10px;
+  font-size: 12px;
   font-weight: 700;
   cursor: pointer;
   font-family: inherit;
-  box-shadow: 2px 2px 0 var(--shadow);
-  line-height: 1;
-  padding: 0;
 }
-.img-remove:hover { transform: translate(-1px,-1px); box-shadow: 3px 3px 0 var(--shadow); }
-.img-remove:active { transform: translate(1px,1px); box-shadow: 1px 1px 0 var(--shadow); }
 
 /* 标签选择 */
 .tag-row { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -531,6 +563,29 @@ body {
   display: block;
 }
 
+/* 多图网格：2-4 张用 2 列，5-9 张用 3 列（正方形裁切，点击进灯箱） */
+.memo-photo-grid {
+  display: grid;
+  gap: 6px;
+  margin-top: 12px;
+}
+.memo-photo-grid.cols-2 {
+  grid-template-columns: repeat(2, 1fr);
+  max-width: 360px;
+}
+.memo-photo-grid.cols-3 {
+  grid-template-columns: repeat(3, 1fr);
+}
+.memo-photo-grid img {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: 10px;
+  border: 2px solid var(--border);
+  cursor: zoom-in;
+  display: block;
+}
+
 .memo-meta { display: flex; align-items: center; gap: 6px; margin-top: 10px; }
 .tag-badge {
   font-size: 11px;
@@ -673,6 +728,41 @@ body {
   border: 3px solid #fff;
   box-shadow: 0 10px 50px rgba(0,0,0,.6);
   object-fit: contain;
+}
+
+/* 灯箱：关闭 / 左右切换按钮 + 底部计数 */
+.lb-nav {
+  position: absolute;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  background: rgba(0, 0, 0, .45);
+  color: #fff;
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+  font-family: inherit;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.lb-close { top: 16px; right: 16px; font-size: 16px; }
+.lb-prev { left: 16px; top: 50%; transform: translateY(-50%); }
+.lb-next { right: 16px; top: 50%; transform: translateY(-50%); }
+.lb-count {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, .55);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 5px 14px;
+  border-radius: 999px;
 }
 
 /* AI SSE 流式润色面板（Neo-Brutalism，与登录卡片同一套边框/硬阴影语言） */
