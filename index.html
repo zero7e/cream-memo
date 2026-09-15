@@ -57,7 +57,7 @@
 ================================================================================
 -->
 
-<link rel="stylesheet" href="css/style.css?v=20260912" />
+<link rel="stylesheet" href="css/style.css?v=20260917" />
 </head>
 
 <body>
@@ -141,15 +141,12 @@
       </div>
       <div class="img-upload-mini">
         <button type="button" class="btn-upload" onclick="$('fileInput').click()">📷<span>传图</span></button>
-        <input type="file" id="fileInput" accept="image/*" />
+        <input type="file" id="fileInput" accept="image/*" multiple />
       </div>
     </div>
 
-    <!-- 图片大图预览（选图后 / 编辑备忘时显示，点击图片可全屏放大，✕ 可移除） -->
-    <div class="img-preview-wrap" id="imgPreviewWrap">
-      <img id="imgPreview" alt="备忘图片预览" onclick="openLightbox(this.src)" />
-      <button type="button" class="img-remove" title="移除这张图片" onclick="removeCurrentImg()">✕</button>
-    </div>
+    <!-- 图片九宫格预览（最多 9 张；上传中转圈、失败可重试，✕ 可移除，点图片全屏查看） -->
+    <div class="img-form-grid" id="imgFormGrid"></div>
 
     <!-- 提交按钮 -->
     <button class="btn btn-primary" id="submitBtn" onclick="submitMemo()">＋ 添加备忘</button>
@@ -194,7 +191,11 @@
 
 <!-- 图片灯箱：点击任意图片全屏放大，再点任意处或按 ESC 关闭 -->
 <div class="lightbox" id="lightbox" onclick="closeLightbox()">
-  <img id="lightboxImg" alt="图片大图" />
+  <button type="button" class="lb-nav lb-close" title="关闭" onclick="event.stopPropagation();closeLightbox()">✕</button>
+  <button type="button" class="lb-nav lb-prev" id="lbPrev" title="上一张" onclick="event.stopPropagation();lightboxShift(-1)">‹</button>
+  <img id="lightboxImg" alt="图片大图" onclick="event.stopPropagation()" />
+  <button type="button" class="lb-nav lb-next" id="lbNext" title="下一张" onclick="event.stopPropagation();lightboxShift(1)">›</button>
+  <div class="lb-count" id="lbCount" onclick="event.stopPropagation()">1 / 1</div>
 </div>
 
 <!-- AI SSE 流式润色面板：思考中状态 + 逐字打字机输出 + 中断/完成操作（配套 server/sse_server.py） -->
@@ -233,6 +234,6 @@
   </div>
 </div>
 
-<script src="js/app.js?v=20260916"></script>
+<script src="js/app.js?v=20260917"></script>
 </body>
 </html>
