@@ -1657,6 +1657,17 @@ function renderList() {
     ? memoList
     : memoList.filter(m => m.tag === activeFilter);
 
+  // 置顶笔记排在最前（按置顶时间倒序，最近置顶的更靠前）
+  const pins = getPins();
+  filtered.sort((a, b) => {
+    const pa = pins.indexOf(a.objectId);
+    const pb = pins.indexOf(b.objectId);
+    if (pa === -1 && pb === -1) return 0;
+    if (pa === -1) return 1;
+    if (pb === -1) return -1;
+    return pb - pa; // 后置顶的排更前
+  });
+
   if (filtered.length === 0) {
     wrap.innerHTML = `
       <div class="empty">
@@ -1687,7 +1698,8 @@ function renderList() {
         `</div>`;
     }
     return `
-    <div class="memo-item ${m.isFinish ? 'done' : ''}" data-id="${m.objectId}">
+    <div class="memo-item ${m.isFinish ? 'done' : ''} ${isPinned(m.objectId) ? 'pinned' : ''}" data-id="${m.objectId}">
+      ${isPinned(m.objectId) ? '<span class="pin-badge">📌 已置顶</span>' : ''}
       <div class="memo-row">
         <div class="memo-check ${m.isFinish ? 'checked' : ''}" onclick="toggleFinish('${m.objectId}', ${!m.isFinish}, this)">
           ${m.isFinish ? '✓' : ''}
@@ -1702,6 +1714,7 @@ function renderList() {
         ${m.tag ? `<span class="tag-badge" data-tag="${escapeHtml(m.tag)}">${escapeHtml(m.tag)}</span>` : ''}
       </div>
       <div class="memo-actions">
+        <button class="btn-mini btn-pin ${isPinned(m.objectId) ? 'active' : ''}" onclick="togglePin('${m.objectId}')" title="置顶 / 取消置顶">${isPinned(m.objectId) ? '📌 取消置顶' : '📌 置顶'}</button>
         <button class="btn-mini btn-polish" onclick="polishMemo('${m.objectId}')" title="AI 总结润色这条笔记">✨ 润色</button>
         <button class="btn-mini btn-edit" onclick="startEdit('${m.objectId}')">编辑</button>
         <button class="btn-mini btn-del" onclick="delMemo('${m.objectId}')">删除</button>
@@ -1747,6 +1760,48 @@ function closeCelebrate() {
   $("celebrate").classList.remove("show");
 }
 
+
+/* ==================== 笔记置顶 =====================
+ * Bmob 表已达 20 列上限，无法新增字段，改用 localStorage 存储置顶 ID。
+ * 按用户隔离（key 含 currentUser），换账号互不干扰。
+ * 置顶笔记在 renderList 中排在列表最前，后置顶的更靠前。
+ */
+
+/** 取当前用户的置顶 ID 列表（最新置顶的在末尾，排序时倒序） */
+function getPins() {
+  try {
+    const key = "memo_pins_" + currentUser;
+    return JSON.parse(localStorage.getItem(key)) || [];
+  } catch (e) { return []; }
+}
+
+/** 存当前用户的置顶 ID 列表 */
+function setPins(arr) {
+  try {
+    localStorage.setItem("memo_pins_" + currentUser, JSON.stringify(arr));
+  } catch (e) {}
+}
+
+/** 判断某笔记是否已置顶 */
+function isPinned(id) {
+  return getPins().indexOf(id) !== -1;
+}
+
+/**
+ * 切换笔记置顶状态
+ * @param {string} id - 备忘 objectId
+ */
+function togglePin(id) {
+  const pins = getPins();
+  const i = pins.indexOf(id);
+  if (i !== -1) {
+    pins.splice(i, 1);
+  } else {
+    pins.push(id);
+  }
+  setPins(pins);
+  renderList();
+}
 
 /* ==================== 10. 交互层  ==================== */
 
