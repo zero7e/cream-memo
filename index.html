@@ -69,7 +69,7 @@
   } catch (e) {}
 })();
 </script>
-<link rel="stylesheet" href="css/style.css?v=20260922" />
+<link rel="stylesheet" href="css/style.css?v=20260923" />
 </head>
 
 <body>
@@ -180,6 +180,9 @@
       <button class="tag-filter-btn"      data-filter="灵感" onclick="filterTag('灵感')">灵感</button>
     </div>
     <button class="btn-export" onclick="exportMemos()">📋 导出全部</button>
+    <button class="btn-export btn-recycle" onclick="openRecycleBin()" title="回收站：删除的笔记保留 7 天">
+      🗑 回收站<span class="recycle-badge" id="recycleBadge" style="display:none;">0</span>
+    </button>
   </div>
 
   <!-- 备忘列表 -->
@@ -233,6 +236,26 @@
   </div>
 </div>
 
+<!-- 回收站弹层：删除的笔记保留 7 天，可还原 / 彻底删除 / 清空 -->
+<div class="stream-overlay" id="recycleOverlay">
+  <div class="stream-box rb-box">
+    <div class="stream-head">
+      <span class="stream-title">🗑 回收站</span>
+      <button class="stream-close" onclick="closeRecycleBin()" title="关闭">✕</button>
+    </div>
+    <div class="stream-sub">
+      <span>删除的笔记在这里保留 7 天，到期自动彻底清除</span>
+    </div>
+    <div class="rb-list" id="recycleList"></div>
+    <div class="stream-foot">
+      <span class="stream-status st-aborted">过期将自动清除</span>
+      <span class="stream-actions">
+        <button class="btn-mini btn-rb-empty" onclick="emptyRecycleBin()">清空回收站</button>
+      </span>
+    </div>
+  </div>
+</div>
+
 <!-- 登录弹窗 -->
 <div class="login-overlay" id="loginOverlay">
   <div class="login-box">
@@ -248,6 +271,6 @@
   </div>
 </div>
 
-<script src="js/app.js?v=20260922"></script>
+<script src="js/app.js?v=20260923"></script>
 </body>
 </html>
