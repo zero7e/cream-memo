@@ -1101,6 +1101,83 @@ body {
   .container { padding: 34px 38px 38px; }
 }
 
+/* ---- 回收站 ---- */
+/* 工具栏入口上的数量角标 */
+.btn-recycle { position: relative; background: #6b7280; }
+.recycle-badge {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #ff5b5b;
+  color: #fff;
+  border: 2px solid var(--card);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 14px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+}
+/* 弹层主体：比 AI 面板稍宽，列表可滚动 */
+.rb-box { max-width: 520px; }
+.rb-list {
+  margin: 12px 18px;
+  padding: 4px;
+  max-height: 60vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+/* 单条回收记录：小卡片 */
+.rb-item {
+  border: 2px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: var(--card);
+  box-shadow: 2px 2px 0 var(--shadow);
+}
+.rb-title { font-size: 15px; font-weight: 700; color: var(--text); word-break: break-word; }
+.rb-desc {
+  font-size: 12px;
+  color: var(--text-l);
+  margin-top: 3px;
+  word-break: break-word;
+  white-space: pre-wrap;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.rb-img {
+  width: 96px;
+  height: 96px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 2px solid var(--border);
+  margin-top: 8px;
+}
+.rb-grid { display: grid; gap: 4px; margin-top: 8px; max-width: 200px; }
+.rb-grid.cols-2 { grid-template-columns: repeat(2, 1fr); }
+.rb-grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
+.rb-grid img {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+.rb-meta { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.rb-time { font-size: 11px; color: var(--text-l); font-weight: 600; }
+.rb-actions { display: flex; gap: 8px; margin-top: 10px; }
+.btn-rb-restore { background: #34c08a; color: #fff; box-shadow: 2px 2px 0 var(--shadow); }
+.btn-rb-purge   { background: #ff5b5b; color: #fff; box-shadow: 2px 2px 0 var(--shadow); }
+.btn-rb-empty   { background: #ff5b5b; color: #fff; box-shadow: 2px 2px 0 var(--shadow); }
+
 /* ---- 11. 暗色模式：硬编码浅色组件的逐项覆盖（变量已覆盖的不再重复） ---- */
 
 /* 表单输入框 / AI 输入框：用抬升一档的 --field，避免与卡片同色 */
