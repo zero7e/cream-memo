@@ -1574,14 +1574,89 @@ const MemoDAO = {
 
   /**
    * 删除备忘（先校验归属：不存在 / 已删除 / 无权 → 抛 NOTE_NO_ACCESS）
+   * 注意：现在删除 = 移入回收站（softDelete），本方法仅回收站「彻底删除」使用
    * @param {string} id - 备忘 ID
    */
   async remove(id) {
     const owned = await this.getById(id);
     if (!owned) throw makeNoAccessError();
     return await BmobAPI.request("DELETE", memoPath(id), null);
+  },
+
+  /* ===================== 回收站（软删除 + 7 天自动清理） =====================
+   * 实现原理（Bmob 表 20 列已满，无法新增 deleted 字段）：
+   *  - 移入回收站：把 username 改写为 __RB__<原用户名>（整行数据原封不动，图片也在）
+   *    · 正常列表按 username 精确查询 → 自动看不到这些行
+   *    · Bmob 的 $regex 模糊查询已失效，但精确等值查询可靠，回收站按固定前缀精确查
+   *    · PUT 会自动刷新 Bmob 的 updatedAt → 它就是「删除时间」，无需额外字段
+   *  - 还原：把 username 改回来（1 次 PUT，图片/标签/完成状态全部保留）
+   *  - 彻底删除：DELETE 原行
+   *  - 打开回收站 / 登录刷新时：updatedAt 超过 7 天的行自动 DELETE
+   */
+
+  /** 当前用户在回收站里的「替身用户名」 */
+  deletedUsername() {
+    return RECYCLE_PREFIX + currentUser;
+  },
+
+  /** 查询回收站全部记录（精确匹配替身用户名，不含大图，按删除时间倒序） */
+  async queryDeleted() {
+    const data = await BmobAPI.request("GET",
+      memoPath() + buildWhere({ username: this.deletedUsername() })
+      + "&order=-updatedAt&keys=" + encodeURIComponent(MEMO_LIST_KEYS), null);
+    return data.results || [];
+  },
+
+  /** 移入回收站：先确认笔记属于当前用户，再改写 username（updatedAt 自动刷新为删除时间） */
+  async softDelete(id) {
+    const owned = await this.getById(id);
+    if (!owned) throw makeNoAccessError();
+    return await BmobAPI.request("PUT", memoPath(id), { username: this.deletedUsername() });
+  },
+
+  /** 从回收站还原：先确认该行确实在「我」的回收站里，再把 username 改回来 */
+  async restore(id) {
+    const row = await this._getDeletedById(id);
+    if (!row) throw makeNoAccessError();
+    return await BmobAPI.request("PUT", memoPath(id), { username: currentUser });
+  },
+
+  /** 彻底删除回收站里的一条（校验替身归属后 DELETE） */
+  async hardRemove(id) {
+    const row = await this._getDeletedById(id);
+    if (!row) throw makeNoAccessError();
+    return await BmobAPI.request("DELETE", memoPath(id), null);
+  },
+
+  /** 按 ID 查询回收站中的单条（where = objectId + 替身用户名），无权 / 不存在 → null */
+  async _getDeletedById(id) {
+    if (!id) return null;
+    try {
+      const data = await BmobAPI.request("GET",
+        memoPath() + buildWhere({ objectId: id, username: this.deletedUsername() })
+        + "&limit=1&keys=" + encodeURIComponent("objectId,username,updatedAt"), null);
+      const results = (data && data.results) || [];
+      return results.length > 0 ? results[0] : null;
+    } catch (e) {
+      console.warn("回收站记录查询失败：", e.message);
+      return null;
+    }
   }
 };
+
+/** 回收站用户名前缀 + 最长保留期限（7 天） */
+const RECYCLE_PREFIX = "__RB__";
+const RECYCLE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * 解析 Bmob 日期字符串（"2026-09-17 19:24:36"）为时间戳
+ * 空格替换为 T 兼容 Safari；非法日期返回 0
+ */
+function parseBmobDate(s) {
+  if (!s) return 0;
+  const t = Date.parse(String(s).replace(" ", "T"));
+  return isNaN(t) ? 0 : t;
+}
 
 
 /* ====================  9. 搜索 & 渲染  ==================== */
@@ -1787,6 +1862,16 @@ function isPinned(id) {
   return getPins().indexOf(id) !== -1;
 }
 
+/** 从置顶列表中移除某 ID（删除笔记 / 移入回收站时同步清理，无则无操作） */
+function unpinId(id) {
+  const pins = getPins();
+  const i = pins.indexOf(id);
+  if (i !== -1) {
+    pins.splice(i, 1);
+    setPins(pins);
+  }
+}
+
 /**
  * 切换笔记置顶状态
  * @param {string} id - 备忘 objectId
@@ -1814,6 +1899,8 @@ function togglePin(id) {
 async function fetchMemos() {
   memoList = await MemoDAO.queryAll();
   renderList();
+  // 后台顺手清理回收站过期记录 + 刷新角标（静默失败，不打扰主流程）
+  cleanupExpiredRecycle().then(refreshRecycleBadge).catch(() => {});
 }
 
 /**
@@ -1972,18 +2059,175 @@ function resetForm() {
 }
 
 /**
- * 删除备忘
+ * 删除备忘（软删除：移入回收站，7 天内可还原，超期自动彻底清除）
  * @param {string} id - 备忘 ID
  */
 async function delMemo(id) {
-  if (!confirm("确定删除这条备忘吗？")) return;
+  if (!confirm("确定删除这条备忘吗？\n\n删除后会移入回收站，7 天内可以随时还原。")) return;
   try {
-    await MemoDAO.remove(id);
+    await MemoDAO.softDelete(id);
     memoList = memoList.filter(m => m.objectId !== id);
+    unpinId(id);              // 置顶状态同步清理
     renderList();
-    showToast("已删除");
+    showToast("已移入回收站，7 天内可还原 ✿");
+    refreshRecycleBadge();    // 后台刷新角标，不阻塞操作
   } catch (e) {
     handleOpError(e, { id });
+  }
+}
+
+/* ==================== 回收站 UI ==================== */
+
+let recycleList = [];   // 回收站列表缓存（打开弹层时拉取）
+
+/** 打开回收站：先自动清理过期记录，再拉取列表渲染 */
+async function openRecycleBin() {
+  const ov = $("recycleOverlay");
+  ov.classList.add("show");
+  $("recycleList").innerHTML =
+    '<div class="empty"><span class="emoji">⏳</span>正在加载回收站…</div>';
+  try {
+    await cleanupExpiredRecycle();
+    recycleList = await MemoDAO.queryDeleted();
+    renderRecycle();
+    refreshRecycleBadge();
+  } catch (e) {
+    $("recycleList").innerHTML =
+      '<div class="empty"><span class="emoji">📡</span>回收站加载失败：' + escapeHtml(e.message) + '</div>';
+  }
+}
+
+/** 关闭回收站弹层（还原/删除后若列表有变化，主列表也要刷新） */
+function closeRecycleBin(needRefresh) {
+  $("recycleOverlay").classList.remove("show");
+  if (needRefresh) fetchMemos().catch(() => {});
+}
+
+/** 渲染回收站列表（缩略图 + 删除日期 + 剩余天数 + 还原/彻底删除） */
+function renderRecycle() {
+  const wrap = $("recycleList");
+  if (!recycleList.length) {
+    wrap.innerHTML =
+      '<div class="empty"><span class="emoji">🗑️</span>回收站是空的～<br/>删除的笔记会在这里保留 7 天</div>';
+    return;
+  }
+  const now = Date.now();
+  wrap.innerHTML = recycleList.map(m => {
+    const imgs = getMemoImages(m);
+    let imgHtml = "";
+    if (imgs.length === 1) {
+      imgHtml = `<img class="rb-img" src="${escapeHtml(imgs[0].url)}" alt="" loading="lazy" />`;
+    } else if (imgs.length > 1) {
+      const cols = (imgs.length <= 4) ? 2 : 3;
+      imgHtml = `<div class="rb-grid cols-${cols}">` +
+        imgs.slice(0, 9).map(im => `<img src="${escapeHtml(im.url)}" alt="" loading="lazy" />`).join("") +
+        `</div>`;
+    }
+    const deletedAt = parseBmobDate(m.updatedAt);
+    const remainMs = RECYCLE_TTL_MS - (now - deletedAt);
+    const remainDays = Math.max(0, Math.ceil(remainMs / (24 * 60 * 60 * 1000)));
+    const dateStr = deletedAt
+      ? new Date(deletedAt).toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit" })
+      : "--";
+    return `
+    <div class="rb-item" data-id="${m.objectId}">
+      <div class="rb-main">
+        <div class="rb-title">${escapeHtml(m.title)}</div>
+        ${m.content ? `<div class="rb-desc">${escapeHtml(m.content)}</div>` : ""}
+        ${imgHtml}
+        <div class="rb-meta">
+          ${m.tag ? `<span class="tag-badge" data-tag="${escapeHtml(m.tag)}">${escapeHtml(m.tag)}</span>` : ""}
+          <span class="rb-time">删除于 ${dateStr} · 还剩 ${remainDays} 天</span>
+        </div>
+      </div>
+      <div class="rb-actions">
+        <button class="btn-mini btn-rb-restore" onclick="restoreMemo('${m.objectId}')">↩️ 还原</button>
+        <button class="btn-mini btn-rb-purge" onclick="purgeMemo('${m.objectId}')">彻底删除</button>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+/** 还原一条笔记：username 改回当前用户，回到主列表 */
+async function restoreMemo(id) {
+  try {
+    await MemoDAO.restore(id);
+    recycleList = recycleList.filter(m => m.objectId !== id);
+    renderRecycle();
+    showToast("已还原 ✿");
+    refreshRecycleBadge();
+    // 主列表里立刻出现这条笔记
+    fetchMemos().catch(() => {});
+  } catch (e) {
+    showToast("还原失败：" + e.message);
+  }
+}
+
+/** 彻底删除一条（不可找回，需二次确认） */
+async function purgeMemo(id) {
+  if (!confirm("彻底删除后无法找回，确定吗？")) return;
+  try {
+    await MemoDAO.hardRemove(id);
+    recycleList = recycleList.filter(m => m.objectId !== id);
+    unpinId(id);
+    renderRecycle();
+    showToast("已彻底删除");
+    refreshRecycleBadge();
+  } catch (e) {
+    showToast("删除失败：" + e.message);
+  }
+}
+
+/** 清空回收站（全部彻底删除，危险操作需二次确认） */
+async function emptyRecycleBin() {
+  if (!recycleList.length) { showToast("回收站已经是空的"); return; }
+  if (!confirm(`确定清空回收站吗？\n\n${recycleList.length} 条笔记将被彻底删除，无法找回！`)) return;
+  let ok = 0, fail = 0;
+  const ids = recycleList.map(m => m.objectId);
+  for (const id of ids) {
+    try { await MemoDAO.hardRemove(id); unpinId(id); ok++; }
+    catch (e) { fail++; }
+  }
+  recycleList = [];
+  renderRecycle();
+  refreshRecycleBadge();
+  showToast(fail ? `已清空 ${ok} 条，${fail} 条失败，请重试` : "回收站已清空");
+}
+
+/**
+ * 自动清理过期的回收站记录（updatedAt 距今超过 7 天 → 彻底删除）
+ * 在打开回收站时调用；失败静默，不影响正常使用
+ */
+async function cleanupExpiredRecycle() {
+  let rows;
+  try {
+    rows = await MemoDAO.queryDeleted();
+  } catch (e) { return; }
+  const now = Date.now();
+  for (const m of rows) {
+    const deletedAt = parseBmobDate(m.updatedAt);
+    if (deletedAt && now - deletedAt > RECYCLE_TTL_MS) {
+      try { await MemoDAO.hardRemove(m.objectId); } catch (e) { /* 下次再试 */ }
+    }
+  }
+}
+
+/** 刷新工具栏回收站角标数字（轻量查询，失败则隐藏角标） */
+async function refreshRecycleBadge() {
+  const badge = $("recycleBadge");
+  if (!badge) return;
+  try {
+    const rows = await MemoDAO.queryDeleted();
+    const now = Date.now();
+    // 只统计未过期的（过期的等打开回收站时统一清理）
+    const valid = rows.filter(m => {
+      const t = parseBmobDate(m.updatedAt);
+      return !t || now - t <= RECYCLE_TTL_MS;
+    });
+    badge.textContent = valid.length;
+    badge.style.display = valid.length ? "flex" : "none";
+  } catch (e) {
+    badge.style.display = "none";
   }
 }
 
