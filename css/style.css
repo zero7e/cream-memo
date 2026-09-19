@@ -1178,6 +1178,57 @@ body {
 .btn-rb-purge   { background: #ff5b5b; color: #fff; box-shadow: 2px 2px 0 var(--shadow); }
 .btn-rb-empty   { background: #ff5b5b; color: #fff; box-shadow: 2px 2px 0 var(--shadow); }
 
+/* ---- 10.5 单条笔记字体设置（表单内，配置跟随该笔记） ---- */
+.font-settings {
+  border: 2px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  background: rgba(0, 0, 0, 0.03);
+}
+.fs-head {
+  font-size: 12px;
+  font-weight: 800;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.fs-sub { font-size: 10px; font-weight: 600; color: var(--text-l); }
+.fs-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.fs-family { display: flex; gap: 6px; flex: 1; }
+.fs-family button {
+  border: 2px solid var(--border);
+  background: var(--card);
+  color: var(--text);
+  border-radius: 7px;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 1px 1px 0 var(--shadow);
+}
+/* 按钮文字本身即样张：衬线/等宽按钮永远用对应字体 */
+.fs-family button[data-f="serif"] { font-family: Georgia, "Songti SC", SimSun, serif; }
+.fs-family button[data-f="mono"]  { font-family: Consolas, "Courier New", monospace; }
+.fs-family button.active { background: var(--primary); color: #fff; }
+.fs-reset {
+  border: 2px solid var(--border);
+  background: var(--btn-del);
+  color: var(--btn-del-t);
+  border-radius: 7px;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 1px 1px 0 var(--shadow);
+  white-space: nowrap;
+}
+.fs-size-row { display: flex; align-items: center; gap: 8px; }
+.fs-size-end { font-size: 11px; color: var(--text-l); font-weight: 700; width: 16px; text-align: center; }
+#fontSizeRange { flex: 1; accent-color: var(--primary); cursor: pointer; height: 20px; }
+.fs-size-val { font-size: 12px; font-weight: 800; min-width: 40px; text-align: right; }
+
 /* ---- 11. 暗色模式：硬编码浅色组件的逐项覆盖（变量已覆盖的不再重复） ---- */
 
 /* 表单输入框 / AI 输入框：用抬升一档的 --field，避免与卡片同色 */
@@ -1197,6 +1248,9 @@ body {
 /* 图片格子占位底 + 编辑提示条 + 加载遮罩 */
 [data-mode="dark"] .fg-cell { background: var(--field); }
 [data-mode="dark"] .edit-bar { background: rgba(255, 255, 255, 0.06); }
+/* 字体设置区：浅色压底 → 暗色抬升 */
+[data-mode="dark"] .font-settings { background: rgba(255, 255, 255, 0.05); }
+[data-mode="dark"] .fs-family button { background: var(--field); }
 [data-mode="dark"] .loading-mask { background: rgba(10, 8, 18, 0.72); }
 /* 庆祝弹层：暖色毛玻璃 → 暗色毛玻璃 */
 [data-mode="dark"] .celebrate { background: rgba(10, 8, 18, 0.6); }
