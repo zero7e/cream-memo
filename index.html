@@ -69,7 +69,7 @@
   } catch (e) {}
 })();
 </script>
-<link rel="stylesheet" href="css/style.css?v=20260923" />
+<link rel="stylesheet" href="css/style.css?v=20260924" />
 </head>
 
 <body>
@@ -143,6 +143,25 @@
     <!-- 标题 / 内容输入 -->
     <input type="text" id="titleInput" maxlength="50" placeholder="备忘标题（如：拿快递）" autocomplete="new-password" />
     <textarea id="contentInput" maxlength="500" placeholder="备注内容（选填，可换行）" autocomplete="new-password"></textarea>
+
+    <!-- 单条笔记字体设置（配置与这条笔记绑定存云端；修改即实时预览） -->
+    <div class="font-settings" id="fontSettings">
+      <div class="fs-head">🔤 正文字体<span class="fs-sub" id="fontScopeText">当前为全局默认字体</span></div>
+      <div class="fs-row">
+        <div class="fs-family" id="fontFamilyPicker">
+          <button type="button" data-f="sans"  onclick="setNoteFamily('sans')"  title="系统无衬线字体">无衬线</button>
+          <button type="button" data-f="serif" onclick="setNoteFamily('serif')" title="衬线字体">衬线</button>
+          <button type="button" data-f="mono"  onclick="setNoteFamily('mono')"  title="等宽代码字体">等宽</button>
+        </div>
+        <button type="button" class="fs-reset" onclick="resetNoteFont()" title="把这条笔记恢复为全局默认字体">↺ 重置字体</button>
+      </div>
+      <div class="fs-size-row">
+        <span class="fs-size-end">12</span>
+        <input type="range" id="fontSizeRange" min="12" max="24" step="1" value="15" oninput="setNoteSize(this.value)" title="拖动调节正文字号" />
+        <span class="fs-size-end">24</span>
+        <span class="fs-size-val" id="fontSizeVal">15px</span>
+      </div>
+    </div>
 
     <!-- 标签 + 图片上传 合并一行 -->
     <div class="form-bottom-row">
@@ -271,6 +290,6 @@
   </div>
 </div>
 
-<script src="js/app.js?v=20260923"></script>
+<script src="js/app.js?v=20260924"></script>
 </body>
 </html>
