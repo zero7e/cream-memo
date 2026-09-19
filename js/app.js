@@ -1658,6 +1658,68 @@ function parseBmobDate(s) {
   return isNaN(t) ? 0 : t;
 }
 
+/* ==========================================================================
+   8.5 单条笔记字体配置（独立 Bmob 表 MemoFont：Memo 表已达 20 列上限）
+   一行 = 一条笔记的配置：memoId + family(sans/serif/mono) + size(12~24)
+   笔记被删除（移入回收站）时同步删除配置行，还原后使用全局默认字体
+   ========================================================================== */
+
+const FONT_TABLE = "MemoFont";
+const FONT_SIZE_MIN = 12;
+const FONT_SIZE_MAX = 24;
+const FONT_DEFAULT = { family: "sans", size: 15 };
+/** 字体族 → 实际 font-family 栈（跨平台系统字体，无需加载网络字体） */
+const FONT_FAMILY_STACKS = {
+  sans:  '-apple-system, BlinkMacSystemFont, "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif',
+  serif: 'Georgia, "Times New Roman", "Songti SC", "SimSun", serif',
+  mono:  '"SFMono-Regular", Consolas, "Liberation Mono", "Courier New", monospace'
+};
+
+const MemoFontDAO = {
+  /** MemoFont 表接口路径（/classes/MemoFont） */
+  _fontPath(id) {
+    return "/classes/" + FONT_TABLE + (id ? "/" + id : "");
+  },
+
+  /** 拉取当前用户全部笔记的字体配置（量小，一次取全，本地按 memoId 索引） */
+  async queryAllForUser(username) {
+    const data = await BmobAPI.request("GET",
+      this._fontPath() + buildWhere({ username }) + "&limit=1000", null);
+    return data.results || [];
+  },
+
+  /** 按笔记 ID 查配置行（不存在返回 null） */
+  async getByMemo(memoId, username) {
+    const data = await BmobAPI.request("GET",
+      this._fontPath() + buildWhere({ memoId, username }) + "&limit=1", null);
+    const results = (data && data.results) || [];
+    return results.length > 0 ? results[0] : null;
+  },
+
+  /**
+   * 保存（有配置行则更新，无则新建）
+   * @returns {object} 保存后的配置 {family, size}
+   */
+  async upsert(memoId, family, size, username) {
+    const existing = await this.getByMemo(memoId, username);
+    if (existing) {
+      await BmobAPI.request("PUT", this._fontPath(existing.objectId), { family, size });
+    } else {
+      await BmobAPI.request("POST", this._fontPath(), { memoId, family, size, username });
+    }
+    return { family, size };
+  },
+
+  /** 删除某条笔记绑定的全部配置行（正常只有一行，查到后逐条 DELETE 兜底） */
+  async removeByMemo(memoId, username) {
+    const data = await BmobAPI.request("GET",
+      this._fontPath() + buildWhere({ memoId }) + "&limit=10&keys=objectId", null);
+    await Promise.all(((data && data.results) || []).map(row =>
+      BmobAPI.request("DELETE", this._fontPath(row.objectId), null)
+    ));
+  }
+};
+
 
 /* ====================  9. 搜索 & 渲染  ==================== */
 
@@ -1772,6 +1834,11 @@ function renderList() {
         imgs.map((im, i) => `<img src="${escapeHtml(im.url)}" alt="图片${i + 1}" loading="lazy" title="点击放大查看" onclick="openLightboxForMemo('${m.objectId}', ${i})" />`).join("") +
         `</div>`;
     }
+    // 该笔记保存的独立字体（字体族作用于标题+正文，字号作用于正文）
+    // 注意：字体栈含双引号，整个声明必须经 escapeHtml，否则会提前闭合 style 属性
+    const f = fontCfgMap.get(m.objectId);
+    const titleStyle = f ? ` style="${escapeHtml(`font-family:${FONT_FAMILY_STACKS[f.family]};`)}"` : "";
+    const descStyle = f ? ` style="${escapeHtml(`font-family:${FONT_FAMILY_STACKS[f.family]};font-size:${f.size}px;`)}"` : "";
     return `
     <div class="memo-item ${m.isFinish ? 'done' : ''} ${isPinned(m.objectId) ? 'pinned' : ''}" data-id="${m.objectId}">
       ${isPinned(m.objectId) ? '<span class="pin-badge">📌 已置顶</span>' : ''}
@@ -1780,8 +1847,8 @@ function renderList() {
           ${m.isFinish ? '✓' : ''}
         </div>
         <div class="memo-content">
-          <div class="memo-title">${escapeHtml(m.title)}</div>
-          ${m.content ? `<div class="memo-desc">${escapeHtml(m.content)}</div>` : ''}
+          <div class="memo-title"${titleStyle}>${escapeHtml(m.title)}</div>
+          ${m.content ? `<div class="memo-desc"${descStyle}>${escapeHtml(m.content)}</div>` : ''}
           ${imgHtml}
         </div>
       </div>
@@ -1898,6 +1965,7 @@ function togglePin(id) {
  */
 async function fetchMemos() {
   memoList = await MemoDAO.queryAll();
+  await loadFontConfigs();
   renderList();
   // 后台顺手清理回收站过期记录 + 刷新角标（静默失败，不打扰主流程）
   cleanupExpiredRecycle().then(refreshRecycleBadge).catch(() => {});
@@ -1940,6 +2008,8 @@ async function submitMemo() {
     try {
       if (editingId) {
         // 编辑模式：只更新文字 / 标签（图片在选图、删图时已即时同步云端）
+        // 先把可能挂起的字体改动落库（拖完滑块立刻点保存的场景）
+        await flushPendingFontSave();
         const patch = { title, content };
         if (selectedTag) patch.tag = selectedTag;
         await MemoDAO.update(editingId, patch);
@@ -1956,6 +2026,15 @@ async function submitMemo() {
       } else {
         // 新建模式：创建备忘
         const newMemo = await createMemo(title, content, selectedTag);
+        // 表单里改过的字体设置绑定到新笔记（没改过则用全局默认，不产生配置行）
+        if (formFontDirty) {
+          try {
+            await MemoFontDAO.upsert(newMemo.objectId, formFont.family, formFont.size, currentUser);
+            fontCfgMap.set(newMemo.objectId, { family: formFont.family, size: formFont.size });
+          } catch (fe) {
+            showToast("笔记已保存，但字体设置保存失败了");
+          }
+        }
         memoList.unshift(newMemo);
         renderList();
       }
@@ -2010,6 +2089,148 @@ async function startEdit(id) {
  * 进入编辑模式并填充表单（startEdit 与 polishMemo 共用）
  * @param {object} m - 云端备忘对象（已通过归属校验，字段齐全）
  */
+/* ---- 单条笔记字体：表单状态与实时预览 ---- */
+
+let fontCfgMap = new Map();        // memoId → {family, size}（云端已保存的配置）
+let formFont = { ...FONT_DEFAULT }; // 当前编辑表单里的字体
+let formFontDirty = false;         // 本次打开表单后用户是否改过字体
+let fontSaveTimer = null;          // 已有笔记自动保存的防抖计时器
+
+/** 字号夹取到 12~24（非法值回落到默认 15） */
+function clampFontSize(v) {
+  const n = parseInt(v, 10);
+  if (isNaN(n)) return FONT_DEFAULT.size;
+  return Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, n));
+}
+
+/** 拉取当前用户全部笔记的字体配置到 fontCfgMap（失败静默，笔记仍用默认字体） */
+async function loadFontConfigs() {
+  fontCfgMap = new Map();
+  try {
+    const rows = await MemoFontDAO.queryAllForUser(currentUser);
+    rows.forEach(r => {
+      if (r.memoId && FONT_FAMILY_STACKS[r.family]) {
+        fontCfgMap.set(r.memoId, { family: r.family, size: clampFontSize(r.size) });
+      }
+    });
+  } catch (e) {
+    console.warn("字体配置加载失败：", e.message);
+  }
+}
+
+/** 编辑某条笔记时：把它自己保存的配置装进表单；没有配置则为全局默认 */
+function loadFontIntoForm(memoId) {
+  const cfg = fontCfgMap.get(memoId);
+  formFont = cfg ? { family: cfg.family, size: cfg.size } : { ...FONT_DEFAULT };
+  formFontDirty = false;
+  clearTimeout(fontSaveTimer);
+  fontSaveTimer = null;
+  applyFormFont();
+}
+
+/** 表单字体恢复为全局默认（新建 / 取消 / 提交后调用） */
+function resetFormFont() {
+  formFont = { ...FONT_DEFAULT };
+  formFontDirty = false;
+  clearTimeout(fontSaveTimer);
+  fontSaveTimer = null;
+  applyFormFont();
+}
+
+/**
+ * 把 formFont 应用到编辑表单（标题 / 正文输入框 + 控件选中态）
+ * 这是实时预览的唯一出口，改动立即生效无需保存
+ */
+function applyFormFont() {
+  const stack = FONT_FAMILY_STACKS[formFont.family] || FONT_FAMILY_STACKS.sans;
+  const titleEl = $("titleInput");
+  const contentEl = $("contentInput");
+  titleEl.style.fontFamily = formFont.family === "sans" ? "" : stack;
+  contentEl.style.fontFamily = formFont.family === "sans" ? "" : stack;
+  contentEl.style.fontSize = formFont.size + "px";
+  // 字体按钮选中态
+  document.querySelectorAll("#fontFamilyPicker button").forEach(b => {
+    b.classList.toggle("active", b.getAttribute("data-f") === formFont.family);
+  });
+  $("fontSizeRange").value = formFont.size;
+  $("fontSizeVal").textContent = formFont.size + "px";
+  // 作用域提示
+  $("fontScopeText").textContent = editingId
+    ? (fontCfgMap.get(editingId) ? "仅作用于这条笔记" : "当前为全局默认字体")
+    : "新笔记默认使用全局字体";
+}
+
+/** 切换字体族（无衬线 / 衬线 / 等宽） */
+function setNoteFamily(family) {
+  if (!FONT_FAMILY_STACKS[family]) return;
+  formFont.family = family;
+  formFontDirty = true;
+  applyFormFont();
+  scheduleFontSave();
+}
+
+/** 调节字号（滑块 oninput 每次触发） */
+function setNoteSize(v) {
+  formFont.size = clampFontSize(v);
+  formFontDirty = true;
+  applyFormFont();
+  scheduleFontSave();
+}
+
+/** 已有笔记：改动防抖 400ms 自动存云端；新建笔记尚无 ID，提交时一起存 */
+function scheduleFontSave() {
+  if (!editingId) return;
+  clearTimeout(fontSaveTimer);
+  fontSaveTimer = setTimeout(() => {
+    fontSaveTimer = null;
+    persistFormFont()
+      .then(() => { applyFormFont(); })
+      .catch(e => {
+        console.warn("字体自动保存失败：", e.message);
+        showToast("字体设置保存失败，请检查网络");
+      });
+  }, 400);
+}
+
+/** 立即把表单字体写入云端 + fontCfgMap（仅已有笔记） */
+async function persistFormFont() {
+  if (!editingId) return;
+  const memoId = editingId;
+  const cfg = await MemoFontDAO.upsert(memoId, formFont.family, formFont.size, currentUser);
+  fontCfgMap.set(memoId, { family: cfg.family, size: cfg.size });
+}
+
+/** 提交前把挂起的防抖保存立即落库（无挂起则跳过） */
+async function flushPendingFontSave() {
+  if (!fontSaveTimer) return;
+  clearTimeout(fontSaveTimer);
+  fontSaveTimer = null;
+  await persistFormFont();
+}
+
+/**
+ * 重置字体：这条笔记恢复全局默认
+ * 已有笔记 → 删除云端配置行；新笔记 → 仅表单回默认
+ */
+async function resetNoteFont() {
+  clearTimeout(fontSaveTimer);
+  fontSaveTimer = null;
+  if (editingId) {
+    const memoId = editingId;
+    fontCfgMap.delete(memoId);
+    try {
+      await MemoFontDAO.removeByMemo(memoId, currentUser);
+    } catch (e) {
+      console.warn("字体配置删除失败：", e.message);
+    }
+  }
+  formFont = { ...FONT_DEFAULT };
+  formFontDirty = false;
+  applyFormFont();
+  if (editingId) renderList();
+  showToast("已恢复为全局默认字体 ✿");
+}
+
 function enterEditMode(m) {
   editingId = m.objectId;
   $("titleInput").value = m.title || "";
@@ -2030,6 +2251,8 @@ function enterEditMode(m) {
   });
   batchMemoId = null;
   renderFormGrid();
+  // 加载这条笔记自己保存的字体设置（无配置则为全局默认）
+  loadFontIntoForm(m.objectId);
   // 同步本地缓存（以云端数据为准）
   const local = memoList.find(x => x.objectId === m.objectId);
   if (local) Object.assign(local, m);
@@ -2056,6 +2279,8 @@ function resetForm() {
   renderFormGrid();
   selectedTag = null;
   document.querySelectorAll("#tagPicker .tag-pick").forEach(b => b.classList.remove("active"));
+  // 表单字体一并恢复全局默认
+  resetFormFont();
 }
 
 /**
@@ -2068,11 +2293,25 @@ async function delMemo(id) {
     await MemoDAO.softDelete(id);
     memoList = memoList.filter(m => m.objectId !== id);
     unpinId(id);              // 置顶状态同步清理
+    await safeClearFontCfg(id); // 该笔记绑定的字体配置同步清除
     renderList();
     showToast("已移入回收站，7 天内可还原 ✿");
     refreshRecycleBadge();    // 后台刷新角标，不阻塞操作
   } catch (e) {
     handleOpError(e, { id });
+  }
+}
+
+/**
+ * 清除某条笔记的字体配置（本地 map + 云端行）
+ * 云端删除失败不阻断笔记删除主流程，仅记录警告
+ */
+async function safeClearFontCfg(id) {
+  fontCfgMap.delete(id);
+  try {
+    await MemoFontDAO.removeByMemo(id, currentUser);
+  } catch (e) {
+    console.warn("字体配置清除失败：", e.message);
   }
 }
 
@@ -2170,6 +2409,7 @@ async function purgeMemo(id) {
     await MemoDAO.hardRemove(id);
     recycleList = recycleList.filter(m => m.objectId !== id);
     unpinId(id);
+    await safeClearFontCfg(id);  // 兜底：残留的字体配置一并清除
     renderRecycle();
     showToast("已彻底删除");
     refreshRecycleBadge();
@@ -2920,6 +3160,8 @@ function isSessionExpired(e) {
 (function init() {
   initTheme();
   initDarkMode();
+  // 字体控件初始态（新建模式 = 全局默认：无衬线 / 15px）
+  applyFormFont();
 
   // 多次延迟清空：覆盖浏览器（特别是 Chrome）自动填充的注入时机（300-500ms）
   clearAutoFill();
