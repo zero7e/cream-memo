@@ -1298,3 +1298,181 @@ body {
   color: #fdba74;
   border-color: rgba(253, 186, 116, 0.3);
 }
+
+/* ==========================================================================
+   11. 单条笔记独立加密
+   ========================================================================== */
+
+/* ---- 表单加密区：开关 ---- */
+.form-lock-box {
+  border: 2px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  background: rgba(0, 0, 0, 0.03);
+}
+.lock-switch-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  user-select: none;
+}
+.lock-switch {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 24px;
+  flex: none;
+}
+.lock-switch input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  margin: 0;
+  cursor: pointer;
+}
+.lock-switch-track {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.18);
+  border: 2px solid var(--border);
+  border-radius: 999px;
+  transition: background 0.2s ease;
+  pointer-events: none;
+}
+.lock-switch-track::before {
+  content: "";
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  left: 3px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: #fff;
+  border: 2px solid var(--border);
+  border-radius: 50%;
+  transition: left 0.2s ease;
+}
+.lock-switch input:checked + .lock-switch-track { background: var(--primary); }
+.lock-switch input:checked + .lock-switch-track::before { left: 21px; }
+.lock-switch input:focus-visible + .lock-switch-track {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.lock-switch-label { font-size: 13px; font-weight: 800; }
+
+/* ---- 表单加密区：状态面板 ---- */
+.lock-panel { margin-top: 8px; font-size: 12px; }
+.lock-panel-off { color: var(--text-l); line-height: 1.6; }
+.lock-panel-on { display: flex; flex-direction: column; gap: 8px; }
+.lock-on-note { color: var(--text-l); line-height: 1.6; }
+.lock-panel-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* ---- 列表 / 回收站加密标识 ---- */
+.lock-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 800;
+  border: 2px solid var(--border);
+  border-radius: 6px;
+  padding: 1px 7px;
+  background: var(--card);
+  color: var(--text);
+  box-shadow: 1px 1px 0 var(--shadow);
+}
+.memo-locked-hint,
+.rb-locked-hint {
+  font-size: 12px;
+  color: var(--text-l);
+  margin-top: 4px;
+  line-height: 1.6;
+}
+
+/* ---- 密码弹窗 ---- */
+.lock-modal-mask {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 1200;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+.lock-modal-mask.show { display: flex; }
+.lock-modal {
+  width: 100%;
+  max-width: 360px;
+  background: var(--card);
+  border: 3px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 6px 6px 0 var(--shadow);
+  padding: 18px 18px 16px;
+}
+.lock-modal-head {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 14px;
+}
+.lock-modal-icon { font-size: 26px; flex: none; }
+.lock-modal-title { font-size: 16px; font-weight: 800; }
+.lock-modal-sub {
+  font-size: 12px;
+  color: var(--text-l);
+  margin-top: 2px;
+  word-break: break-all;
+}
+.lock-modal-body { display: flex; flex-direction: column; gap: 10px; }
+.lock-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 700;
+}
+.lock-field input {
+  width: 100%;
+  border: 2px solid var(--border);
+  border-radius: 8px;
+  padding: 9px 11px;
+  font-size: 14px;
+  font-family: inherit;
+  background: var(--card);
+  color: var(--text);
+}
+.lock-field input:focus { outline: none; border-color: var(--primary); }
+.lock-modal-err {
+  margin-top: 10px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--btn-del);
+  border: 2px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+  line-height: 1.5;
+}
+.lock-modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+.lock-modal-foot .btn { padding: 8px 16px; font-size: 13px; }
+#lockModalOk.loading { opacity: 0.65; }
+#lockModalOk.loading::after {
+  content: "…";
+}
+
+/* ---- 暗色模式覆盖 ---- */
+[data-mode="dark"] .form-lock-box { background: rgba(255, 255, 255, 0.05); }
+[data-mode="dark"] .lock-switch-track { background: rgba(255, 255, 255, 0.16); }
+[data-mode="dark"] .lock-badge {
+  background: var(--field);
+  box-shadow: none;
+}
+[data-mode="dark"] .lock-field input { background: var(--field); }
+[data-mode="dark"] .lock-modal-mask { background: rgba(0, 0, 0, 0.62); }
