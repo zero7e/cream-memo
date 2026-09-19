@@ -226,9 +226,9 @@ const BmobAPI = {
    * @returns {Promise<object>}     - 解析后的 JSON 响应
    * @throws  {Error} 含 Bmob error/message 的标准 Error
    */
-  async request(method, path, body) {
+  async request(method, path, body, extraHeaders) {
     const fullPath = BMOB_API_PATH + path;
-    const headers = { ...this._authHeaders(), "Content-Type": "application/json" };
+    const headers = { ...this._authHeaders(), "Content-Type": "application/json", ...(extraHeaders || {}) };
     const hosts = this._candidateHosts();
     let lastErr = null;
 
@@ -240,7 +240,10 @@ const BmobAPI = {
         const data = await this._parseBody(resp);
         if (!resp.ok) {
           const msg = (data && (data.error || data.message)) || ("HTTP " + resp.status);
-          throw new Error(msg);
+          const err = new Error(msg);
+          err.bmobCode = data && data.code;
+          err.httpStatus = resp.status;
+          throw err;
         }
         bmobWorkingHost = host;  // 缓存可用域名
         return data;
@@ -1411,7 +1414,12 @@ async function polishMemo(id) {
     showToast("AI 正在生成中，请先停止当前任务");
     return;
   }
+  // 加密笔记：先过密码（与 startEdit 同一鉴权入口），否则 AI 拿不到正文
   const local = memoList.find(m => m.objectId === id);
+  if (local && lockedIds.has(id)) {
+    const ok = await promptUnlockNote(local);
+    if (!ok) return;
+  }
   AI_STREAM.open(id, local ? (local.title || "") : "");
   await AI_STREAM.connect(id);
 }
@@ -1430,6 +1438,7 @@ function retryPolish() {
 let memoList = [];       // 备忘列表（内存缓存，与云端同步）
 let editingId = null;    // 当前编辑的备忘 ID（null = 新建模式）
 let selectedTag = null;  // 表单选中的标签
+let lockedIds = new Set(); // 加密笔记 ID 集合（fetchMemos 后填充）
 
 /*
  * 多图上传状态
@@ -1501,11 +1510,24 @@ function makeNoAccessError() {
  * 列表只需要文字 + 5 个缩略图打包列（9 张图共 ~60KB），
  * 大图等灯箱打开时按字段单独拉。
  * imgUrl 为旧版单图字段，保留在白名单里以兼容历史数据。
+ *
+ * 加密硬隔离：列表查询拆成两批键 —
+ *   META 键（不含正文/图片）对所有行生效；
+ *   CONTENT 键只对【未加密】笔记二次批量拉取，
+ *   加密笔记的正文和图片 URL 永远不进入客户端。
  */
 const MEMO_LIST_KEYS = [
   "objectId", "title", "content", "isFinish", "username", "tag", "imgUrl",
   "thumb1", "thumb2", "thumb3", "thumb4", "thumb5",
   "createdAt", "updatedAt"
+].join(",");
+/** 元数据键：列表/回收站首屏全量行只带这些 */
+const MEMO_META_KEYS = [
+  "objectId", "title", "isFinish", "username", "tag", "createdAt", "updatedAt"
+].join(",");
+/** 正文键：仅对未加密笔记补拉（objectId 用于本地合并） */
+const MEMO_CONTENT_KEYS = [
+  "objectId", "content", "imgUrl", "thumb1", "thumb2", "thumb3", "thumb4", "thumb5"
 ].join(",");
 
 /**
@@ -1523,8 +1545,11 @@ const MemoDAO = {
   async queryAll() {
     const data = await BmobAPI.request("GET",
       memoPath() + buildWhere({ username: currentUser })
-      + "&order=-createdAt&keys=" + encodeURIComponent(MEMO_LIST_KEYS), null);
-    return data.results || [];
+      + "&order=-createdAt&keys=" + encodeURIComponent(MEMO_META_KEYS), null);
+    // 加密硬隔离：只对未加密笔记补拉正文/图片
+    const out = await MemoLock.enrichRows(data.results || []);
+    lockedIds = out.locked;
+    return out.rows;
   },
 
   /**
@@ -1549,6 +1574,24 @@ const MemoDAO = {
   },
 
   /**
+   * 仅查 meta 字段做归属校验（加密笔记也不返回正文/图片）
+   * @returns {Promise<object|null>}
+   */
+  async getMetaById(id) {
+    if (!id) return null;
+    try {
+      const data = await BmobAPI.request("GET",
+        memoPath() + buildWhere({ objectId: id, username: currentUser })
+        + "&limit=1&keys=" + encodeURIComponent(MEMO_META_KEYS), null);
+      const results = (data && data.results) || [];
+      return results.length > 0 ? results[0] : null;
+    } catch (e) {
+      console.warn("getMetaById 查询失败：", e.message);
+      return null;
+    }
+  },
+
+  /**
    * 新增备忘
    * @returns {Promise<object>} 包含 objectId 的完整备忘对象
    */
@@ -1566,19 +1609,20 @@ const MemoDAO = {
    */
   async update(id, patch, skipVerify) {
     if (!skipVerify) {
-      const owned = await this.getById(id);
+      // meta 归属校验即可：加密笔记也不传输正文
+      const owned = await this.getMetaById(id);
       if (!owned) throw makeNoAccessError();
     }
     return await BmobAPI.request("PUT", memoPath(id), patch);
   },
 
   /**
-   * 删除备忘（先校验归属：不存在 / 已删除 / 无权 → 抛 NOTE_NO_ACCESS）
+   * 删除备忘（meta 校验归属）
    * 注意：现在删除 = 移入回收站（softDelete），本方法仅回收站「彻底删除」使用
    * @param {string} id - 备忘 ID
    */
   async remove(id) {
-    const owned = await this.getById(id);
+    const owned = await this.getMetaById(id);
     if (!owned) throw makeNoAccessError();
     return await BmobAPI.request("DELETE", memoPath(id), null);
   },
@@ -1599,17 +1643,18 @@ const MemoDAO = {
     return RECYCLE_PREFIX + currentUser;
   },
 
-  /** 查询回收站全部记录（精确匹配替身用户名，不含大图，按删除时间倒序） */
+  /** 查询回收站全部记录（精确匹配替身用户名，meta 键，按删除时间倒序） */
   async queryDeleted() {
     const data = await BmobAPI.request("GET",
       memoPath() + buildWhere({ username: this.deletedUsername() })
-      + "&order=-updatedAt&keys=" + encodeURIComponent(MEMO_LIST_KEYS), null);
-    return data.results || [];
+      + "&order=-updatedAt&keys=" + encodeURIComponent(MEMO_META_KEYS), null);
+    // 回收站同样执行加密硬隔离（加密行正文不传输）
+    return await MemoLock.enrichRows(data.results || []);
   },
 
-  /** 移入回收站：先确认笔记属于当前用户，再改写 username（updatedAt 自动刷新为删除时间） */
+  /** 移入回收站：meta 归属校验（加密笔记正文不传输），再改写 username */
   async softDelete(id) {
-    const owned = await this.getById(id);
+    const owned = await this.getMetaById(id);
     if (!owned) throw makeNoAccessError();
     return await BmobAPI.request("PUT", memoPath(id), { username: this.deletedUsername() });
   },
@@ -1720,6 +1765,453 @@ const MemoFontDAO = {
   }
 };
 
+/* ==========================================================================
+   8.6 单条笔记独立加密
+   ─────────────────────────────────────────────────────────────────────────
+   设计（满足「校验在后端、哈希不下发」）：
+   · 每条加密笔记对应一个 Bmob _User 锁账号：username = "__LOCK__<memoId>"，
+     密码 = 用户自定义访问密码。Bmob 对密码做服务端哈希存储，任何接口
+     都不返回密码/哈希字段。
+   · 访问校验 = Bmob 登录接口（GET /login）：成功才返回锁账号 objectId +
+     sessionToken（仅内存暂存），错误密码 code 101。前端永不接触哈希。
+   · 改密 / 关闭加密：用锁账号自身 session 操作（PUT/DELETE 本人）。
+   · 彻底删除 / 清空回收站 / 过期清理无法拿到密码 → 调用云函数
+     purgeLockUsers（内置 Master Key，仅存 Bmob 服务端）批量删锁账号。
+   · 正文硬隔离：列表/回收站先只查 meta 键，再仅对未加密笔记补拉
+     正文/图片（enrichRows），加密行数据不进入客户端。
+   ========================================================================== */
+
+const LOCK_PREFIX = "__LOCK__";
+const LOCK_FUNC_NAME = "purgeLockUsers";
+const LOCK_PWD_MIN = 6;
+const LOCK_PWD_MAX = 32;
+function lockNameFor(memoId) { return LOCK_PREFIX + memoId; }
+
+/** 锁账号会话临时暂存（memoId → {objectId, sessionToken}），不落盘 */
+let lockSessions = new Map();
+
+const MemoLock = {
+  lockName: lockNameFor,
+
+  isLocked(memoId) { return lockedIds.has(memoId); },
+
+  /**
+   * 对 meta 行集执行加密富集：
+   * 1) 批量查锁账号 → locked 集合
+   * 2) 仅对未加密行批量补拉 content/imgUrl/thumb 并合并
+   * @returns {Promise<{rows: object[], locked: Set}>}
+   */
+  async enrichRows(metaRows) {
+    const locked = new Set();
+    if (!metaRows.length) return { rows: metaRows, locked };
+
+    const names = metaRows.map(r => lockNameFor(r.objectId));
+    const found = await this.queryLockUsers(names);
+    const unlockedIds = [];
+    metaRows.forEach(r => {
+      if (found.has(lockNameFor(r.objectId))) locked.add(r.objectId);
+      else unlockedIds.push(r.objectId);
+    });
+
+    if (unlockedIds.length) {
+      // 同批行 username 一致（主列表=本人 / 回收站=替身），用首行即可
+      const data = await BmobAPI.request("GET",
+        memoPath() + buildWhere({ username: metaRows[0].username, objectId: { "$in": unlockedIds } })
+        + "&limit=1000&keys=" + encodeURIComponent(MEMO_CONTENT_KEYS), null);
+      (data.results || []).forEach(c => {
+        const row = metaRows.find(r => r.objectId === c.objectId);
+        if (row) Object.assign(row, c);
+      });
+    }
+    return { rows: metaRows, locked };
+  },
+
+  /** 按锁名批量查锁账号（返回 Map username → objectId；密码字段 Bmob 不下发） */
+  async queryLockUsers(names) {
+    const map = new Map();
+    if (!names.length) return map;
+    const data = await BmobAPI.request("GET",
+      "/users" + buildWhere({ username: { "$in": names } })
+      + "&limit=1000&keys=" + encodeURIComponent("objectId,username"), null);
+    (data.results || []).forEach(u => map.set(u.username, u.objectId));
+    return map;
+  },
+
+  /** 开启加密：注册锁账号（密码由 Bmob 服务端哈希存储） */
+  async enable(memoId, password) {
+    return await BmobAPI.request("POST", "/users", {
+      username: lockNameFor(memoId), password
+    });
+  },
+
+  /** 后端校验：Bmob 登录接口；密码错误 Bmob 抛 code 101 */
+  async verify(memoId, password) {
+    return await BmobAPI.request("GET",
+      "/login?username=" + encodeURIComponent(lockNameFor(memoId))
+      + "&password=" + encodeURIComponent(password), null);
+  },
+
+  /** 修改密码：锁账号 session 鉴权 */
+  async changePassword(userObjectId, sessionToken, newPassword) {
+    return await BmobAPI.request("PUT", "/users/" + userObjectId,
+      { password: newPassword },
+      { "X-Bmob-Session-Token": sessionToken });
+  },
+
+  /** 关闭加密：锁账号自删（session 鉴权） */
+  async selfRemove(userObjectId, sessionToken) {
+    return await BmobAPI.request("DELETE", "/users/" + userObjectId, null,
+      { "X-Bmob-Session-Token": sessionToken });
+  },
+
+  /** 后端批量删锁账号（云函数 purgeLockUsers，Master Key 仅在云端） */
+  async adminPurge(memoIds) {
+    if (!memoIds || !memoIds.length) return { count: 0 };
+    const data = await BmobAPI.request("POST",
+      "/functions/" + LOCK_FUNC_NAME,
+      { names: JSON.stringify(memoIds.map(lockNameFor)) });
+    const raw = data.result;
+    if (raw == null) return { count: 0 };
+    return typeof raw === "string" ? JSON.parse(raw) : raw;
+  }
+};
+
+
+/* ==========================================================================
+   8.7 加密密码弹窗与四种流程
+   ─────────────────────────────────────────────────────────────────────────
+   · promptUnlockNote    查看：后端 verify → 成功才加载正文（可连续重试，错误不关闭）
+   · setupLockExisting   已有笔记开启加密（注册锁账号，立即生效）
+   · changeLockExisting  修改密码（旧密码 verify → PUT 本人）
+   · disableLockExisting 关闭加密（密码 verify → 自删锁账号）
+   · 新建笔记：开关 + 弹窗暂存 pendingLockPwd，保存成功后注册锁账号
+   ========================================================================== */
+
+const LockDialog = {
+  _resolve: null,
+  _reject: null,
+  _cfg: null,
+  _busy: false,
+
+  /**
+   * 打开密码弹窗
+   * @param {object} cfg - title / noteTitle / okText / fields[{key,label,placeholder}]
+   *                       / validate(form)→errMsg|null / onSubmit(form)→Promise
+   * @returns {Promise<object>} 成功 resolve 表单值；取消 reject
+   */
+  open(cfg) {
+    if (this._reject) this._reject("reopen");
+    this._cfg = cfg;
+    $("lockModalTitle").textContent = cfg.title || "笔记加密";
+    $("lockModalSub").textContent = cfg.noteTitle ? ("《" + cfg.noteTitle + "》") : "";
+    $("lockModalOk").textContent = cfg.okText || "确定";
+    this._showError("");
+    $("lockModalBody").innerHTML = (cfg.fields || []).map((f, i) => `
+      <label class="lock-field">
+        <span>${escapeHtml(f.label || "")}</span>
+        <input type="${f.type === "text" ? "text" : "password"}"
+          data-key="${escapeHtml(f.key)}"
+          placeholder="${escapeHtml(f.placeholder || "")}" autocomplete="off" />
+      </label>`).join("");
+    $("lockModalMask").classList.add("show");
+    const first = $("lockModalBody").querySelector("input");
+    if (first) setTimeout(() => first.focus(), 50);
+    return new Promise((resolve, reject) => {
+      this._resolve = resolve;
+      this._reject = reject;
+    });
+  },
+
+  _collect() {
+    const form = {};
+    $("lockModalBody").querySelectorAll("input").forEach(inp => {
+      form[inp.dataset.key] = inp.value;
+    });
+    return form;
+  },
+
+  _showError(msg) {
+    const el = $("lockModalErr");
+    el.textContent = msg || "";
+    el.style.display = msg ? "block" : "none";
+  },
+
+  async submit() {
+    if (this._busy || !this._cfg) return;
+    const form = this._collect();
+    if (this._cfg.validate) {
+      const err = this._cfg.validate(form);
+      if (err) { this._showError(err); return; }
+    }
+    this._busy = true;
+    const okBtn = $("lockModalOk");
+    okBtn.classList.add("loading");
+    okBtn.disabled = true;
+    try {
+      await this._cfg.onSubmit(form);
+      this._done(form);
+    } catch (e) {
+      this._showError(translateLockError(e));
+    } finally {
+      this._busy = false;
+      okBtn.classList.remove("loading");
+      okBtn.disabled = false;
+    }
+  },
+
+  cancel() {
+    if (this._busy) return;
+    this._fail("cancel");
+  },
+
+  _done(form) {
+    $("lockModalMask").classList.remove("show");
+    const r = this._resolve;
+    this._resolve = null; this._reject = null; this._cfg = null;
+    if (r) r(form);
+  },
+
+  _fail(reason) {
+    $("lockModalMask").classList.remove("show");
+    const rj = this._reject;
+    this._resolve = null; this._reject = null; this._cfg = null;
+    if (rj) rj(reason);
+  }
+};
+
+/** Bmob 错误 → 用户可读中文（不泄露技术细节） */
+function translateLockError(e) {
+  if (e && (e.bmobCode === 101 || /username or password incorrect/i.test(e.message || ""))) {
+    return "密码错误，请重试";
+  }
+  if (e && e.bmobCode === 202) return "该笔记已加密（重复设置），请先关闭";
+  return (e && e.message) || "操作失败，请重试";
+}
+
+function validateLockPwd(pwd) {
+  if (!pwd) return "请输入密码";
+  if (pwd.length < LOCK_PWD_MIN || pwd.length > LOCK_PWD_MAX) {
+    return "密码长度需为 " + LOCK_PWD_MIN + "~" + LOCK_PWD_MAX + " 位";
+  }
+  return null;
+}
+
+/** 弹窗字段定义复用 */
+const LOCK_FIELDS = {
+  set: [
+    { key: "pwd", label: "设置访问密码", placeholder: LOCK_PWD_MIN + "~" + LOCK_PWD_MAX + " 位密码" },
+    { key: "pwd2", label: "确认密码", placeholder: "再次输入密码" }
+  ],
+  view: [
+    { key: "pwd", label: "访问密码", placeholder: "请输入该笔记的访问密码" }
+  ],
+  change: [
+    { key: "oldPwd", label: "当前密码", placeholder: "请输入当前密码" },
+    { key: "newPwd", label: "新密码", placeholder: LOCK_PWD_MIN + "~" + LOCK_PWD_MAX + " 位新密码" },
+    { key: "newPwd2", label: "确认新密码", placeholder: "再次输入新密码" }
+  ],
+  disable: [
+    { key: "pwd", label: "访问密码", placeholder: "请输入访问密码以确认" }
+  ]
+};
+
+/**
+ * 查看加密笔记：弹窗 → 后端校验 → 成功才加载正文并合并本地行
+ * @returns {Promise<boolean>}
+ */
+async function promptUnlockNote(m) {
+  try {
+    await LockDialog.open({
+      title: "查看加密笔记",
+      noteTitle: m.title,
+      okText: "解锁查看",
+      fields: LOCK_FIELDS.view,
+      onSubmit: async (f) => {
+        const verr = validateLockPwd(f.pwd);
+        if (verr) throw new Error(verr);
+        const user = await MemoLock.verify(m.objectId, f.pwd);
+        lockSessions.set(m.objectId, {
+          objectId: user.objectId, sessionToken: user.sessionToken
+        });
+        // 校验通过后此刻才加载正文
+        const full = await MemoDAO.getById(m.objectId);
+        if (!full) throw new Error("笔记不存在或已被删除");
+        const idx = memoList.findIndex(x => x.objectId === m.objectId);
+        if (idx >= 0) memoList[idx] = Object.assign({}, memoList[idx], full);
+      }
+    });
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+/** 已有笔记开启加密（注册锁账号，立即生效） */
+async function setupLockExisting(memoId) {
+  const m = memoList.find(x => x.objectId === memoId);
+  await LockDialog.open({
+    title: "开启笔记加密",
+    noteTitle: m ? m.title : "",
+    okText: "确认开启",
+    fields: LOCK_FIELDS.set,
+    validate: (f) => {
+      const e1 = validateLockPwd(f.pwd);
+      if (e1) return e1;
+      if (f.pwd !== f.pwd2) return "两次输入的密码不一致";
+      return null;
+    },
+    onSubmit: async (f) => {
+      await MemoLock.enable(memoId, f.pwd);
+      lockedIds.add(memoId);
+    }
+  });
+}
+
+/** 修改访问密码 */
+async function changeLockExisting(memoId) {
+  const m = memoList.find(x => x.objectId === memoId);
+  await LockDialog.open({
+    title: "修改访问密码",
+    noteTitle: m ? m.title : "",
+    okText: "确认修改",
+    fields: LOCK_FIELDS.change,
+    validate: (f) => {
+      if (!f.oldPwd) return "请输入当前密码";
+      const e1 = validateLockPwd(f.newPwd);
+      if (e1) return e1;
+      if (f.newPwd !== f.newPwd2) return "两次输入的新密码不一致";
+      if (f.newPwd === f.oldPwd) return "新密码不能与当前密码相同";
+      return null;
+    },
+    onSubmit: async (f) => {
+      const user = await MemoLock.verify(memoId, f.oldPwd);
+      const upd = await MemoLock.changePassword(user.objectId, user.sessionToken, f.newPwd);
+      lockSessions.set(memoId, {
+        objectId: user.objectId,
+        sessionToken: (upd && upd.sessionToken) || user.sessionToken
+      });
+    }
+  });
+}
+
+/** 关闭加密（自删锁账号） */
+async function disableLockExisting(memoId) {
+  const m = memoList.find(x => x.objectId === memoId);
+  await LockDialog.open({
+    title: "关闭笔记加密",
+    noteTitle: m ? m.title : "",
+    okText: "确认关闭",
+    fields: LOCK_FIELDS.disable,
+    onSubmit: async (f) => {
+      const verr = validateLockPwd(f.pwd);
+      if (verr) throw new Error(verr);
+      const user = await MemoLock.verify(memoId, f.pwd);
+      await MemoLock.selfRemove(user.objectId, user.sessionToken);
+      lockedIds.delete(memoId);
+      lockSessions.delete(memoId);
+    }
+  });
+}
+
+/* ---- 表单内加密开关 ---- */
+
+/** 新建笔记暂存的密码（不落盘；保存成功后注册锁账号） */
+let pendingLockPwd = null;
+
+/** 开关切换：已有笔记立即走弹窗；新建笔记走设置弹窗暂存 */
+function onLockSwitchChange() {
+  const sw = $("lockSwitchInput");
+  if (editingId) {
+    const isLocked = lockedIds.has(editingId);
+    if (sw.checked && !isLocked) {
+      setupLockExisting(editingId)
+        .then(() => { syncLockBox(); renderList(); })
+        .catch(() => { sw.checked = false; });
+    } else if (!sw.checked && isLocked) {
+      disableLockExisting(editingId)
+        .then(() => { syncLockBox(); renderList(); })
+        .catch(() => { sw.checked = true; });
+    }
+  } else if (sw.checked) {
+    openPendingLockDialog()
+      .catch(() => { sw.checked = false; });
+  } else {
+    pendingLockPwd = null;
+    syncLockBox();
+  }
+}
+
+/** 新建笔记设置/修改暂存密码 */
+async function openPendingLockDialog() {
+  await LockDialog.open({
+    title: "开启笔记加密",
+    noteTitle: "保存笔记后生效",
+    okText: "确认",
+    fields: LOCK_FIELDS.set,
+    validate: (f) => {
+      const e1 = validateLockPwd(f.pwd);
+      if (e1) return e1;
+      if (f.pwd !== f.pwd2) return "两次输入的密码不一致";
+      return null;
+    },
+    onSubmit: async (f) => { pendingLockPwd = f.pwd; }
+  });
+  syncLockBox();
+}
+
+/** 表单加密区按钮 */
+function onClickChangeLock() {
+  if (editingId) changeLockExisting(editingId).catch(() => {});
+  else openPendingLockDialog().catch(() => {});
+}
+function onClickDisableLock() {
+  if (!editingId) return;
+  disableLockExisting(editingId)
+    .then(() => { syncLockBox(); renderList(); })
+    .catch(() => {});
+}
+
+/** 根据当前状态渲染表单加密区（开关 + 说明/按钮） */
+function syncLockBox() {
+  const box = $("formLockBox");
+  if (!box) return;
+  box.style.display = "block";
+  const sw = $("lockSwitchInput");
+  const label = $("lockSwitchLabel");
+  const panel = $("lockPanel");
+
+  if (editingId && lockedIds.has(editingId)) {
+    sw.checked = true;
+    sw.disabled = false;
+    label.textContent = "🔒 该笔记已加密";
+    panel.innerHTML = `
+      <div class="lock-panel-on">
+        <span class="lock-on-note">已通过密码验证，加密状态随笔记保存；刷新后需重新输入密码</span>
+        <div class="lock-panel-btns">
+          <button type="button" class="btn-mini" onclick="onClickChangeLock()">🔑 修改密码</button>
+          <button type="button" class="btn-mini btn-del" onclick="onClickDisableLock()">关闭加密</button>
+        </div>
+      </div>`;
+  } else if (!editingId && pendingLockPwd) {
+    sw.checked = true;
+    sw.disabled = false;
+    label.textContent = "🔒 保存后加密";
+    panel.innerHTML = `
+      <div class="lock-panel-on">
+        <span class="lock-on-note">密码已设置，将在保存笔记时生效</span>
+        <div class="lock-panel-btns">
+          <button type="button" class="btn-mini" onclick="onClickChangeLock()">🔑 修改密码</button>
+        </div>
+      </div>`;
+  } else {
+    sw.checked = false;
+    sw.disabled = false;
+    label.textContent = "🔐 开启笔记加密";
+    panel.innerHTML = `
+      <div class="lock-panel-off">开启后查看正文需输入密码；密码仅保存哈希，正文仍正常存储</div>`;
+  }
+}
+
 
 /* ====================  9. 搜索 & 渲染  ==================== */
 
@@ -1821,39 +2313,50 @@ function renderList() {
   }
 
   wrap.innerHTML = filtered.map(m => {
-    // 统一取出该备忘的图片（兼容旧 imgUrl 字段 + 新 imgUrl1..9 字段）
-    const imgs = getMemoImages(m);
+    const locked = lockedIds.has(m.objectId);
     let imgHtml = "";
-    if (imgs.length === 1) {
-      // 1 张：全宽大图（沿用原样式）
-      imgHtml = `<img class="memo-img" src="${escapeHtml(imgs[0].url)}" alt="图片" loading="lazy" title="点击放大查看" onclick="openLightboxForMemo('${m.objectId}', 0)" />`;
-    } else if (imgs.length > 1) {
-      // 多张：2-4 张 2 列、5-9 张 3 列
-      const cols = (imgs.length <= 4) ? 2 : 3;
-      imgHtml = `<div class="memo-photo-grid cols-${cols}">` +
-        imgs.map((im, i) => `<img src="${escapeHtml(im.url)}" alt="图片${i + 1}" loading="lazy" title="点击放大查看" onclick="openLightboxForMemo('${m.objectId}', ${i})" />`).join("") +
-        `</div>`;
+    let titleStyle = "";
+    let descStyle = "";
+    let descHtml = "";
+
+    if (locked) {
+      // 加密笔记：正文/图片根本未加载，卡片只渲染标题 + 锁标识
+      descHtml = `<div class="memo-locked-hint">🔒 内容已加密，点「编辑」输入密码查看</div>`;
+    } else {
+      // 统一取出该备忘的图片（兼容旧 imgUrl 字段 + 新 imgUrl1..9 字段）
+      const imgs = getMemoImages(m);
+      if (imgs.length === 1) {
+        // 1 张：全宽大图（沿用原样式）
+        imgHtml = `<img class="memo-img" src="${escapeHtml(imgs[0].url)}" alt="图片" loading="lazy" title="点击放大查看" onclick="openLightboxForMemo('${m.objectId}', 0)" />`;
+      } else if (imgs.length > 1) {
+        // 多张：2-4 张 2 列、5-9 张 3 列
+        const cols = (imgs.length <= 4) ? 2 : 3;
+        imgHtml = `<div class="memo-photo-grid cols-${cols}">` +
+          imgs.map((im, i) => `<img src="${escapeHtml(im.url)}" alt="图片${i + 1}" loading="lazy" title="点击放大查看" onclick="openLightboxForMemo('${m.objectId}', ${i})" />`).join("") +
+          `</div>`;
+      }
+      // 该笔记保存的独立字体（字体栈含双引号，整个声明必须经 escapeHtml）
+      const f = fontCfgMap.get(m.objectId);
+      titleStyle = f ? ` style="${escapeHtml(`font-family:${FONT_FAMILY_STACKS[f.family]};`)}"` : "";
+      descStyle = f ? ` style="${escapeHtml(`font-family:${FONT_FAMILY_STACKS[f.family]};font-size:${f.size}px;`)}"` : "";
+      descHtml = m.content ? `<div class="memo-desc"${descStyle}>${escapeHtml(m.content)}</div>` : "";
     }
-    // 该笔记保存的独立字体（字体族作用于标题+正文，字号作用于正文）
-    // 注意：字体栈含双引号，整个声明必须经 escapeHtml，否则会提前闭合 style 属性
-    const f = fontCfgMap.get(m.objectId);
-    const titleStyle = f ? ` style="${escapeHtml(`font-family:${FONT_FAMILY_STACKS[f.family]};`)}"` : "";
-    const descStyle = f ? ` style="${escapeHtml(`font-family:${FONT_FAMILY_STACKS[f.family]};font-size:${f.size}px;`)}"` : "";
     return `
-    <div class="memo-item ${m.isFinish ? 'done' : ''} ${isPinned(m.objectId) ? 'pinned' : ''}" data-id="${m.objectId}">
+    <div class="memo-item ${m.isFinish ? 'done' : ''} ${isPinned(m.objectId) ? 'pinned' : ''} ${locked ? 'locked' : ''}" data-id="${m.objectId}">
       ${isPinned(m.objectId) ? '<span class="pin-badge">📌 已置顶</span>' : ''}
       <div class="memo-row">
         <div class="memo-check ${m.isFinish ? 'checked' : ''}" onclick="toggleFinish('${m.objectId}', ${!m.isFinish}, this)">
           ${m.isFinish ? '✓' : ''}
         </div>
         <div class="memo-content">
-          <div class="memo-title"${titleStyle}>${escapeHtml(m.title)}</div>
-          ${m.content ? `<div class="memo-desc"${descStyle}>${escapeHtml(m.content)}</div>` : ''}
+          <div class="memo-title"${titleStyle}>${locked ? '🔒 ' : ''}${escapeHtml(m.title)}</div>
+          ${descHtml}
           ${imgHtml}
         </div>
       </div>
       <div class="memo-meta">
         ${m.tag ? `<span class="tag-badge" data-tag="${escapeHtml(m.tag)}">${escapeHtml(m.tag)}</span>` : ''}
+        ${locked ? '<span class="lock-badge">🔒 已加密</span>' : ''}
       </div>
       <div class="memo-actions">
         <button class="btn-mini btn-pin ${isPinned(m.objectId) ? 'active' : ''}" onclick="togglePin('${m.objectId}')" title="置顶 / 取消置顶">${isPinned(m.objectId) ? '📌 取消置顶' : '📌 置顶'}</button>
@@ -2036,6 +2539,16 @@ async function submitMemo() {
           }
         }
         memoList.unshift(newMemo);
+        // 表单开关暂存的密码：笔记已建 → 注册锁账号（失败不影响笔记本身）
+        if (pendingLockPwd) {
+          try {
+            await MemoLock.enable(newMemo.objectId, pendingLockPwd);
+            lockedIds.add(newMemo.objectId);
+          } catch (le) {
+            showToast("笔记已保存，但加密开启失败，请编辑重试");
+          }
+          pendingLockPwd = null;
+        }
         renderList();
       }
       resetForm();
@@ -2072,7 +2585,19 @@ async function toggleFinish(id, finish, checkEl) {
  * @param {string} id - 备忘 ID
  */
 async function startEdit(id) {
-  const m = await withLoading(() => MemoDAO.getById(id));
+  // 加密笔记：后端密码校验通过后才允许加载正文（promptUnlockNote 内部完成 verify + getById）
+  if (lockedIds.has(id)) {
+    const local = memoList.find(x => x.objectId === id);
+    if (!local) {
+      showToast("该笔记不存在、已被删除或无权访问");
+      return;
+    }
+    const ok = await promptUnlockNote(local);
+    if (!ok) return;
+  }
+
+  const m = await withLoading(() =>
+    lockedIds.has(id) ? Promise.resolve(memoList.find(x => x.objectId === id)) : MemoDAO.getById(id));
 
   // 空判断：笔记不存在 / 已被删除 / 无权访问 → 友好提示 + 清理本地残留卡片
   if (!m) {
@@ -2253,6 +2778,9 @@ function enterEditMode(m) {
   renderFormGrid();
   // 加载这条笔记自己保存的字体设置（无配置则为全局默认）
   loadFontIntoForm(m.objectId);
+  // 加密区：已加密 → 显示改密/关闭（密码不回显）
+  pendingLockPwd = null;
+  syncLockBox();
   // 同步本地缓存（以云端数据为准）
   const local = memoList.find(x => x.objectId === m.objectId);
   if (local) Object.assign(local, m);
@@ -2281,6 +2809,9 @@ function resetForm() {
   document.querySelectorAll("#tagPicker .tag-pick").forEach(b => b.classList.remove("active"));
   // 表单字体一并恢复全局默认
   resetFormFont();
+  // 加密区复位（新建暂存密码清空）
+  pendingLockPwd = null;
+  syncLockBox();
 }
 
 /**
@@ -2318,6 +2849,7 @@ async function safeClearFontCfg(id) {
 /* ==================== 回收站 UI ==================== */
 
 let recycleList = [];   // 回收站列表缓存（打开弹层时拉取）
+let recycleLockedIds = new Set(); // 回收站中的加密笔记 ID（queryDeleted 后填充）
 
 /** 打开回收站：先自动清理过期记录，再拉取列表渲染 */
 async function openRecycleBin() {
@@ -2327,7 +2859,9 @@ async function openRecycleBin() {
     '<div class="empty"><span class="emoji">⏳</span>正在加载回收站…</div>';
   try {
     await cleanupExpiredRecycle();
-    recycleList = await MemoDAO.queryDeleted();
+    const out = await MemoDAO.queryDeleted();
+    recycleList = out.rows;
+    recycleLockedIds = out.locked;
     renderRecycle();
     refreshRecycleBadge();
   } catch (e) {
@@ -2352,15 +2886,20 @@ function renderRecycle() {
   }
   const now = Date.now();
   wrap.innerHTML = recycleList.map(m => {
-    const imgs = getMemoImages(m);
+    const locked = recycleLockedIds.has(m.objectId);
     let imgHtml = "";
-    if (imgs.length === 1) {
-      imgHtml = `<img class="rb-img" src="${escapeHtml(imgs[0].url)}" alt="" loading="lazy" />`;
-    } else if (imgs.length > 1) {
-      const cols = (imgs.length <= 4) ? 2 : 3;
-      imgHtml = `<div class="rb-grid cols-${cols}">` +
-        imgs.slice(0, 9).map(im => `<img src="${escapeHtml(im.url)}" alt="" loading="lazy" />`).join("") +
-        `</div>`;
+    let descHtml = "";
+    if (!locked) {
+      const imgs = getMemoImages(m);
+      if (imgs.length === 1) {
+        imgHtml = `<img class="rb-img" src="${escapeHtml(imgs[0].url)}" alt="" loading="lazy" />`;
+      } else if (imgs.length > 1) {
+        const cols = (imgs.length <= 4) ? 2 : 3;
+        imgHtml = `<div class="rb-grid cols-${cols}">` +
+          imgs.slice(0, 9).map(im => `<img src="${escapeHtml(im.url)}" alt="" loading="lazy" />`).join("") +
+          `</div>`;
+      }
+      descHtml = m.content ? `<div class="rb-desc">${escapeHtml(m.content)}</div>` : "";
     }
     const deletedAt = parseBmobDate(m.updatedAt);
     const remainMs = RECYCLE_TTL_MS - (now - deletedAt);
@@ -2369,13 +2908,15 @@ function renderRecycle() {
       ? new Date(deletedAt).toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit" })
       : "--";
     return `
-    <div class="rb-item" data-id="${m.objectId}">
+    <div class="rb-item ${locked ? 'locked' : ''}" data-id="${m.objectId}">
       <div class="rb-main">
-        <div class="rb-title">${escapeHtml(m.title)}</div>
-        ${m.content ? `<div class="rb-desc">${escapeHtml(m.content)}</div>` : ""}
+        <div class="rb-title">${locked ? '🔒 ' : ''}${escapeHtml(m.title)}</div>
+        ${descHtml}
         ${imgHtml}
+        ${locked ? '<div class="rb-locked-hint">内容已加密，还原后仍需密码访问</div>' : ''}
         <div class="rb-meta">
           ${m.tag ? `<span class="tag-badge" data-tag="${escapeHtml(m.tag)}">${escapeHtml(m.tag)}</span>` : ""}
+          ${locked ? '<span class="lock-badge">🔒 已加密</span>' : ''}
           <span class="rb-time">删除于 ${dateStr} · 还剩 ${remainDays} 天</span>
         </div>
       </div>
@@ -2402,19 +2943,35 @@ async function restoreMemo(id) {
   }
 }
 
-/** 彻底删除一条（不可找回，需二次确认） */
+/** 彻底删除一条（不可找回，需二次确认；加密笔记联动云函数清锁账号） */
 async function purgeMemo(id) {
   if (!confirm("彻底删除后无法找回，确定吗？")) return;
   try {
     await MemoDAO.hardRemove(id);
     recycleList = recycleList.filter(m => m.objectId !== id);
+    recycleLockedIds.delete(id);
     unpinId(id);
     await safeClearFontCfg(id);  // 兜底：残留的字体配置一并清除
+    await safePurgeLocks([id]); // 加密笔记：云函数删除锁账号（静默兜底）
     renderRecycle();
     showToast("已彻底删除");
     refreshRecycleBadge();
   } catch (e) {
     showToast("删除失败：" + e.message);
+  }
+}
+
+/**
+ * 调云函数批量清锁账号（静默失败，不阻断删除主流程；云函数未部署时只警告）
+ * @param {string[]} memoIds
+ */
+async function safePurgeLocks(memoIds) {
+  const locked = (memoIds || []).filter(id => id);
+  if (!locked.length) return;
+  try {
+    await MemoLock.adminPurge(locked);
+  } catch (e) {
+    console.warn("purgeLockUsers 云函数清理失败：", e.message);
   }
 }
 
@@ -2428,7 +2985,10 @@ async function emptyRecycleBin() {
     try { await MemoDAO.hardRemove(id); unpinId(id); ok++; }
     catch (e) { fail++; }
   }
+  // 批量清锁账号（云函数一次调用处理全部加密笔记）
+  await safePurgeLocks(ids.filter(id => recycleLockedIds.has(id)));
   recycleList = [];
+  recycleLockedIds = new Set();
   renderRecycle();
   refreshRecycleBadge();
   showToast(fail ? `已清空 ${ok} 条，${fail} 条失败，请重试` : "回收站已清空");
@@ -2439,17 +2999,22 @@ async function emptyRecycleBin() {
  * 在打开回收站时调用；失败静默，不影响正常使用
  */
 async function cleanupExpiredRecycle() {
-  let rows;
+  let out;
   try {
-    rows = await MemoDAO.queryDeleted();
+    out = await MemoDAO.queryDeleted();
   } catch (e) { return; }
   const now = Date.now();
-  for (const m of rows) {
+  const expiredLocked = [];
+  for (const m of out.rows) {
     const deletedAt = parseBmobDate(m.updatedAt);
     if (deletedAt && now - deletedAt > RECYCLE_TTL_MS) {
-      try { await MemoDAO.hardRemove(m.objectId); } catch (e) { /* 下次再试 */ }
+      try {
+        await MemoDAO.hardRemove(m.objectId);
+        if (out.locked.has(m.objectId)) expiredLocked.push(m.objectId);
+      } catch (e) { /* 下次再试 */ }
     }
   }
+  if (expiredLocked.length) await safePurgeLocks(expiredLocked);
 }
 
 /** 刷新工具栏回收站角标数字（轻量查询，失败则隐藏角标） */
@@ -2457,10 +3022,10 @@ async function refreshRecycleBadge() {
   const badge = $("recycleBadge");
   if (!badge) return;
   try {
-    const rows = await MemoDAO.queryDeleted();
+    const out = await MemoDAO.queryDeleted();
     const now = Date.now();
     // 只统计未过期的（过期的等打开回收站时统一清理）
-    const valid = rows.filter(m => {
+    const valid = out.rows.filter(m => {
       const t = parseBmobDate(m.updatedAt);
       return !t || now - t <= RECYCLE_TTL_MS;
     });
@@ -2888,6 +3453,17 @@ function afterBatch() {
     else showToast(doneN + " 张成功，" + failN + " 张失败，点 ↻ 重试");
   }
 }
+
+/* ---- 加密弹窗键盘：Enter 提交 / Esc 取消（仅弹窗可见时生效） ---- */
+document.addEventListener("keydown", (e) => {
+  const mask = $("lockModalMask");
+  if (!mask.classList.contains("show")) return;
+  if (e.key === "Enter") { e.preventDefault(); LockDialog.submit(); }
+  else if (e.key === "Escape") { e.preventDefault(); LockDialog.cancel(); }
+});
+
+/* 初始渲染一次加密区（登录后表单即可见；此时为新建/未加密态） */
+syncLockBox();
 
 /* ---- 图片灯箱（缩略图秒开，大图按需单字段拉取，支持左右切换） ---- */
 
