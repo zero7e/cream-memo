@@ -1782,9 +1782,11 @@ const MemoFontDAO = {
    ========================================================================== */
 
 const LOCK_PREFIX = "__LOCK__";
-const LOCK_FUNC_NAME = "purgeLockUsers";
+const LOCK_FUNC_PURGE = "purgeLockUsers";
+const LOCK_FUNC_RESET = "resetLockPassword";
 const LOCK_PWD_MIN = 6;
 const LOCK_PWD_MAX = 32;
+const LOCK_HINT_MAX = 50;
 function lockNameFor(memoId) { return LOCK_PREFIX + memoId; }
 
 /** 锁账号会话临时暂存（memoId → {objectId, sessionToken}），不落盘 */
@@ -1837,11 +1839,36 @@ const MemoLock = {
     return map;
   },
 
-  /** 开启加密：注册锁账号（密码由 Bmob 服务端哈希存储） */
-  async enable(memoId, password) {
-    return await BmobAPI.request("POST", "/users", {
-      username: lockNameFor(memoId), password
-    });
+  /** 开启加密：注册锁账号（密码由 Bmob 服务端哈希存储；hint 为可选密码提示，存 _User 自定义字段） */
+  async enable(memoId, password, hint) {
+    const body = { username: lockNameFor(memoId), password };
+    if (hint) body.hint = String(hint).slice(0, LOCK_HINT_MAX);
+    return await BmobAPI.request("POST", "/users", body);
+  },
+
+  /** 查询单条锁账号的密码提示（仅在用户点「忘记密码」时按需拉取，不随列表下发） */
+  async getHint(memoId) {
+    try {
+      const data = await BmobAPI.request("GET",
+        "/users" + buildWhere({ username: lockNameFor(memoId) })
+        + "&limit=1&keys=" + encodeURIComponent("objectId,hint"), null);
+      const u = (data.results && data.results[0]) || null;
+      return (u && u.hint) || "";
+    } catch (e) { return ""; }
+  },
+
+  /** 忘记密码 → 重置（云函数 resetLockPassword：Master Key 验证笔记归属后改密） */
+  async resetByOwner(memoId, newPassword) {
+    const data = await BmobAPI.request("POST",
+      "/functions/" + LOCK_FUNC_RESET,
+      { memoId, newPassword, sessionToken: sessionToken || "" });
+    const raw = data.result;
+    let res = raw;
+    if (typeof raw === "string") {
+      try { res = JSON.parse(raw); } catch (e) { throw new Error(raw); }
+    }
+    if (res && res.ok === false) throw new Error(res.error || "重置失败，请重试");
+    return res;
   },
 
   /** 后端校验：Bmob 登录接口；密码错误 Bmob 抛 code 101 */
@@ -1868,7 +1895,7 @@ const MemoLock = {
   async adminPurge(memoIds) {
     if (!memoIds || !memoIds.length) return { count: 0 };
     const data = await BmobAPI.request("POST",
-      "/functions/" + LOCK_FUNC_NAME,
+      "/functions/" + LOCK_FUNC_PURGE,
       { names: JSON.stringify(memoIds.map(lockNameFor)) });
     const raw = data.result;
     if (raw == null) return { count: 0 };
@@ -1906,13 +1933,20 @@ const LockDialog = {
     $("lockModalSub").textContent = cfg.noteTitle ? ("《" + cfg.noteTitle + "》") : "";
     $("lockModalOk").textContent = cfg.okText || "确定";
     this._showError("");
+    // 「忘记密码」按钮仅在解锁查看弹窗显示；设置/改密/关闭/重置自身等场景隐藏
+    const forgotBtn = $("lockModalForgot");
+    if (forgotBtn) {
+      forgotBtn.style.display = cfg.showForgot ? "" : "none";
+      forgotBtn.disabled = false;
+    }
     $("lockModalBody").innerHTML = (cfg.fields || []).map((f, i) => `
       <label class="lock-field">
         <span>${escapeHtml(f.label || "")}</span>
         <input type="${f.type === "text" ? "text" : "password"}"
           data-key="${escapeHtml(f.key)}"
           placeholder="${escapeHtml(f.placeholder || "")}" autocomplete="off" />
-      </label>`).join("");
+      </label>`).join("")
+      + (cfg.extra ? `<div class="lock-extra">${cfg.extra}</div>` : "");
     $("lockModalMask").classList.add("show");
     const first = $("lockModalBody").querySelector("input");
     if (first) setTimeout(() => first.focus(), 50);
@@ -1945,8 +1979,10 @@ const LockDialog = {
     }
     this._busy = true;
     const okBtn = $("lockModalOk");
+    const forgotBtn = $("lockModalForgot");
     okBtn.classList.add("loading");
     okBtn.disabled = true;
+    if (forgotBtn) forgotBtn.disabled = true;
     try {
       await this._cfg.onSubmit(form);
       this._done(form);
@@ -1956,6 +1992,7 @@ const LockDialog = {
       this._busy = false;
       okBtn.classList.remove("loading");
       okBtn.disabled = false;
+      if (forgotBtn) forgotBtn.disabled = false;
     }
   },
 
@@ -2000,7 +2037,8 @@ function validateLockPwd(pwd) {
 const LOCK_FIELDS = {
   set: [
     { key: "pwd", label: "设置访问密码", placeholder: LOCK_PWD_MIN + "~" + LOCK_PWD_MAX + " 位密码" },
-    { key: "pwd2", label: "确认密码", placeholder: "再次输入密码" }
+    { key: "pwd2", label: "确认密码", placeholder: "再次输入密码" },
+    { key: "hint", type: "text", label: "密码提示（可选）", placeholder: "忘记密码时的助记词，如：生日后四位" }
   ],
   view: [
     { key: "pwd", label: "访问密码", placeholder: "请输入该笔记的访问密码" }
@@ -2012,6 +2050,10 @@ const LOCK_FIELDS = {
   ],
   disable: [
     { key: "pwd", label: "访问密码", placeholder: "请输入访问密码以确认" }
+  ],
+  reset: [
+    { key: "newPwd", label: "设置新密码", placeholder: LOCK_PWD_MIN + "~" + LOCK_PWD_MAX + " 位新密码" },
+    { key: "newPwd2", label: "确认新密码", placeholder: "再次输入新密码" }
   ]
 };
 
@@ -2021,28 +2063,87 @@ const LOCK_FIELDS = {
  */
 async function promptUnlockNote(m) {
   try {
+    window.__resetMemoId = m.objectId;
     await LockDialog.open({
       title: "查看加密笔记",
       noteTitle: m.title,
       okText: "解锁查看",
       fields: LOCK_FIELDS.view,
+      showForgot: true,
       onSubmit: async (f) => {
         const verr = validateLockPwd(f.pwd);
         if (verr) throw new Error(verr);
-        const user = await MemoLock.verify(m.objectId, f.pwd);
-        lockSessions.set(m.objectId, {
-          objectId: user.objectId, sessionToken: user.sessionToken
-        });
-        // 校验通过后此刻才加载正文
-        const full = await MemoDAO.getById(m.objectId);
-        if (!full) throw new Error("笔记不存在或已被删除");
-        const idx = memoList.findIndex(x => x.objectId === m.objectId);
-        if (idx >= 0) memoList[idx] = Object.assign({}, memoList[idx], full);
+        await unlockAndLoad(m, f.pwd);
       }
     });
     return true;
   } catch (e) {
     return false;
+  }
+}
+
+/** 弹窗底部「🙋 忘记密码」按钮 → 进入重置流程（__resetMemoId 由 promptUnlockNote 写入） */
+function onClickForgotLock() {
+  openResetFlow();
+}
+
+/** 解锁并加载正文（verify → 缓存 session → 全量 GET → 合并本地行） */
+async function unlockAndLoad(m, password) {
+  const user = await MemoLock.verify(m.objectId, password);
+  lockSessions.set(m.objectId, {
+    objectId: user.objectId, sessionToken: user.sessionToken
+  });
+  const full = await MemoDAO.getById(m.objectId);
+  if (!full) throw new Error("笔记不存在或已被删除");
+  const idx = memoList.findIndex(x => x.objectId === m.objectId);
+  if (idx >= 0) memoList[idx] = Object.assign({}, memoList[idx], full);
+}
+
+/**
+ * 忘记密码 → 重置流程：
+ * 1) 拉取该笔记的密码提示（如有）
+ * 2) 弹窗显示提示 + 新密码/确认
+ * 3) 云函数 resetLockPassword 改密（Master Key 验证笔记归属）
+ * 4) 成功后自动用新密码解锁查看
+ */
+async function openResetFlow() {
+  const memoId = window.__resetMemoId;
+  if (!memoId) return;
+  const m = memoList.find(x => x.objectId === memoId)
+    || recycleList.find(x => x.objectId === memoId);
+  if (!m) return;
+
+  let hint = "";
+  try { hint = await MemoLock.getHint(memoId); } catch (e) { hint = ""; }
+
+  const extra = hint
+    ? `<div class="lock-hint-box">💡 密码提示：${escapeHtml(hint)}</div>`
+    : `<div class="lock-hint-box empty">（未设置密码提示，直接设置新密码即可）</div>`;
+
+  try {
+    await LockDialog.open({
+      title: "重置访问密码",
+      noteTitle: m.title,
+      okText: "确认重置并查看",
+      fields: LOCK_FIELDS.reset,
+      extra,
+      validate: (f) => {
+        const e1 = validateLockPwd(f.newPwd);
+        if (e1) return e1;
+        if (f.newPwd !== f.newPwd2) return "两次输入的新密码不一致";
+        return null;
+      },
+      onSubmit: async (f) => {
+        await MemoLock.resetByOwner(memoId, f.newPwd);
+        // 重置成功 → 自动用新密码解锁查看
+        await unlockAndLoad(m, f.newPwd);
+        // 自动进入编辑模式（unlockAndLoad 已写入 lockSessions，startEdit 不会再弹密码框）
+        await startEdit(memoId);
+      }
+    });
+  } catch (e) {
+    // 用户取消重置（或主动关闭）：回到密码输入弹窗，再给一次输密码的机会
+    promptUnlockNote(m).catch(() => {});
   }
 }
 
@@ -2061,7 +2162,7 @@ async function setupLockExisting(memoId) {
       return null;
     },
     onSubmit: async (f) => {
-      await MemoLock.enable(memoId, f.pwd);
+      await MemoLock.enable(memoId, f.pwd, f.hint || "");
       lockedIds.add(memoId);
     }
   });
@@ -2115,8 +2216,9 @@ async function disableLockExisting(memoId) {
 
 /* ---- 表单内加密开关 ---- */
 
-/** 新建笔记暂存的密码（不落盘；保存成功后注册锁账号） */
+/** 新建笔记暂存的密码 + 提示（不落盘；保存成功后注册锁账号） */
 let pendingLockPwd = null;
+let pendingLockHint = "";
 
 /** 开关切换：已有笔记立即走弹窗；新建笔记走设置弹窗暂存 */
 function onLockSwitchChange() {
@@ -2137,6 +2239,7 @@ function onLockSwitchChange() {
       .catch(() => { sw.checked = false; });
   } else {
     pendingLockPwd = null;
+    pendingLockHint = "";
     syncLockBox();
   }
 }
@@ -2154,7 +2257,10 @@ async function openPendingLockDialog() {
       if (f.pwd !== f.pwd2) return "两次输入的密码不一致";
       return null;
     },
-    onSubmit: async (f) => { pendingLockPwd = f.pwd; }
+    onSubmit: async (f) => {
+      pendingLockPwd = f.pwd;
+      pendingLockHint = f.hint || "";
+    }
   });
   syncLockBox();
 }
@@ -2542,12 +2648,13 @@ async function submitMemo() {
         // 表单开关暂存的密码：笔记已建 → 注册锁账号（失败不影响笔记本身）
         if (pendingLockPwd) {
           try {
-            await MemoLock.enable(newMemo.objectId, pendingLockPwd);
+            await MemoLock.enable(newMemo.objectId, pendingLockPwd, pendingLockHint);
             lockedIds.add(newMemo.objectId);
           } catch (le) {
             showToast("笔记已保存，但加密开启失败，请编辑重试");
           }
           pendingLockPwd = null;
+          pendingLockHint = "";
         }
         renderList();
       }
@@ -2585,8 +2692,9 @@ async function toggleFinish(id, finish, checkEl) {
  * @param {string} id - 备忘 ID
  */
 async function startEdit(id) {
-  // 加密笔记：后端密码校验通过后才允许加载正文（promptUnlockNote 内部完成 verify + getById）
-  if (lockedIds.has(id)) {
+  // 加密笔记：本会话尚未通过密码验证（lockSessions 无记录）才弹密码窗。
+  // 不能用 !local.content 判断——空内容笔记解锁后 content 仍为空，会误判成未解锁、重复弹窗
+  if (lockedIds.has(id) && !lockSessions.has(id)) {
     const local = memoList.find(x => x.objectId === id);
     if (!local) {
       showToast("该笔记不存在、已被删除或无权访问");
