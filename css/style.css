@@ -1463,6 +1463,27 @@ body {
 }
 .lock-modal-foot .btn { padding: 8px 16px; font-size: 13px; }
 #lockModalOk.loading { opacity: 0.65; }
+.lock-extra { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+/* 忘记密码：弹窗底部靠左的醒目描边按钮（随主题变色，hover 反色填充） */
+.btn-lock-forgot {
+  margin-right: auto;          /* 推到最左，与「取消/解锁」拉开距离 */
+  background: var(--card);
+  color: var(--primary);
+  border-color: var(--primary);
+  white-space: nowrap;         /* 文字保持一行，不被挤成竖排 */
+  flex-shrink: 0;              /* flex 布局中不被压缩 */
+}
+.btn-lock-forgot:hover:not(:disabled) {
+  background: var(--primary);
+  color: #fff;
+}
+.btn-lock-forgot:disabled { opacity: 0.5; cursor: not-allowed; }
+.lock-hint-box {
+  font-size: 12px; line-height: 1.6;
+  background: var(--card); border: 1px dashed var(--border);
+  border-radius: 8px; padding: 8px 12px; color: var(--muted);
+}
+.lock-hint-box.empty { color: var(--muted); opacity: 0.7; }
 #lockModalOk.loading::after {
   content: "…";
 }
