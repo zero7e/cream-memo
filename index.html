@@ -69,7 +69,7 @@
   } catch (e) {}
 })();
 </script>
-<link rel="stylesheet" href="css/style.css?v=20260925" />
+<link rel="stylesheet" href="css/style.css?v=20260927" />
 </head>
 
 <body>
@@ -237,6 +237,8 @@
     <div class="lock-modal-body" id="lockModalBody"></div>
     <div class="lock-modal-err" id="lockModalErr" style="display:none;"></div>
     <div class="lock-modal-foot">
+      <!-- 忘记密码入口：必须在输密码这一步可见，解锁后再出现就逻辑颠倒了 -->
+      <button type="button" class="btn btn-lock-forgot" id="lockModalForgot" onclick="onClickForgotLock()">🙋 忘记密码</button>
       <button type="button" class="btn btn-ghost" id="lockModalCancel" onclick="LockDialog.cancel()">取消</button>
       <button type="button" class="btn btn-primary" id="lockModalOk" onclick="LockDialog.submit()"></button>
     </div>
@@ -321,6 +323,6 @@
   </div>
 </div>
 
-<script src="js/app.js?v=20260925"></script>
+<script src="js/app.js?v=20260927"></script>
 </body>
 </html>
