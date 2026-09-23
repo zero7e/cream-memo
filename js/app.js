@@ -723,6 +723,7 @@ function generateAIMemo() {
     const { title, content, tag } = analyzeAndGenerate(idea);
     $("titleInput").value = title;
     $("contentInput").value = content;
+    autoResizeContent(); // AI 生成的内容可能很长，输入框要立刻撑开
     if (tag) pickTag(tag);
     showToast("AI 已分析你的需求，生成结构化内容 ✿");
   }, 900);
@@ -2781,6 +2782,7 @@ function applyFormFont() {
   titleEl.style.fontFamily = formFont.family === "sans" ? "" : stack;
   contentEl.style.fontFamily = formFont.family === "sans" ? "" : stack;
   contentEl.style.fontSize = formFont.size + "px";
+  autoResizeContent(); // 字号变了行高也变，高度要跟着重算，不然会出现内部滚动条
   // 字体按钮选中态
   document.querySelectorAll("#fontFamilyPicker button").forEach(b => {
     b.classList.toggle("active", b.getAttribute("data-f") === formFont.family);
@@ -2791,6 +2793,20 @@ function applyFormFont() {
   $("fontScopeText").textContent = editingId
     ? (fontCfgMap.get(editingId) ? "仅作用于这条笔记" : "当前为全局默认字体")
     : "新笔记默认使用全局字体";
+}
+
+/**
+ * 备注输入框随内容自动长高
+ * 原理（两步走）：先把高度还成 auto 让浏览器算出内容的真实高度（scrollHeight），
+ * 再把真实高度设回去。上限 400px，超过后输入框内部滚动，避免一条长笔记把整页撑爆。
+ * 所有会改动 contentInput 内容的地方（打字 / AI 生成 / 进编辑 / 清空 / 调字号）都要调它。
+ */
+function autoResizeContent() {
+  const el = $("contentInput");
+  el.style.height = "auto";                                    // 第一步：缩回 auto，scrollHeight 才准
+  const h = Math.min(el.scrollHeight, 400);                    // 第二步：按内容撑开，封顶 400px
+  el.style.height = h + "px";
+  el.style.overflowY = el.scrollHeight > 400 ? "auto" : "hidden"; // 只有触顶后才显示内部滚动条
 }
 
 /** 切换字体族（无衬线 / 衬线 / 等宽） */
@@ -2868,6 +2884,7 @@ function enterEditMode(m) {
   editingId = m.objectId;
   $("titleInput").value = m.title || "";
   $("contentInput").value = m.content || "";
+  autoResizeContent(); // 编辑长笔记时输入框要按内容撑开
   $("submitBtn").textContent = "💾 保存修改";
   $("editBar").classList.add("show");
   selectedTag = m.tag || null;
@@ -2908,6 +2925,7 @@ function exitEditMode() {
 function resetForm() {
   $("titleInput").value = "";
   $("contentInput").value = "";
+  autoResizeContent(); // 清空后高度也要缩回默认
   $("aiInput").value = "";
   $("fileInput").value = "";
   formImages = [];
@@ -3895,6 +3913,8 @@ function isSessionExpired(e) {
       e.preventDefault(); $("submitBtn").click();
     }
   });
+  // 打字 / 删字 / 粘贴 / 撤销都触发 input → 输入框实时随内容长高缩回
+  $("contentInput").addEventListener("input", autoResizeContent);
   $("loginPass").addEventListener("keydown", (e) => {
     if (e.key === "Enter") { e.preventDefault(); $("loginBtn").click(); }
   });
