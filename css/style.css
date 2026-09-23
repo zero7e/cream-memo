@@ -254,6 +254,8 @@ body {
 }
 .form-card input:focus,
 .form-card textarea:focus { border-color: var(--accent); box-shadow: 3px 3px 0 var(--shadow); }
+/* 备注输入框：禁止手动拉伸；高度由 JS 随内容自动撑开（app.js 的 autoResizeContent），
+   min-height 保证空态时也有两行多的视觉高度，触顶 400px 后内部滚动 */
 .form-card textarea { resize: none; min-height: 60px; }
 
 /* AI 输入行：独立成分组卡片（淡紫底 + 虚线框，与手动输入区视觉分开） */
